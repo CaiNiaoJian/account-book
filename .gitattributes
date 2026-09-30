@@ -1,0 +1,52 @@
+# =============================================================================
+# 行尾与二进制处理约定
+# -----------------------------------------------------------------------------
+# 为什么需要它：
+#   本项目在 Windows 上开发，而 git 默认的 autocrlf 会对每个文本文件给出
+#   "LF will be replaced by CRLF" 警告——几十行噪声会把真正重要的提示淹没。
+#   显式约定行尾后，仓库内统一为 LF、检出时按类型转换，团队与 CI 行为一致。
+#
+# 注意：**BOM 不受本文件影响**。packaging/*.ps1 刻意保留 UTF-8 BOM，
+#       因为 Windows PowerShell 5.1 会把无 BOM 的 UTF-8 脚本按 GBK 解析，
+#       导致中文注释引发大面积语法错误（这是本项目实际踩过的坑）。
+# =============================================================================
+
+# 默认：由 git 自动识别文本文件并做规范化
+* text=auto
+
+# ---- 二进制资源：禁止任何行尾转换，否则文件会被破坏 ----
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.abk binary
+
+# ---- 脚本与配置：检出为 CRLF，便于记事本等工具正确显示 ----
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# ---- 语言与文档：统一 LF ----
+*.py text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# ---- 语言统计：让 GitHub 等平台正确识别 ----
+*.tsx linguist-language=TypeScript
+*.ts linguist-language=TypeScript
+src/accountbook/resources/** linguist-generated=true
+web/package-lock.json linguist-generated=true
