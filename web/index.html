@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>记账本</title>
+    <!--
+      说明：
+        * 这里刻意**不写 CSP meta 标签**。生产环境的 CSP 由后端以响应头下发
+          （见 accountbook/api/server.py 的 _render_index），
+          这样开发模式的 Vite HMR（需要 ws: 与 inline 脚本）不会被误伤。
+        * 启动引导数据由后端注入 `window.__AB_BOOT__`（见同处代码），
+          前端首帧即可拿到主题、语言、版本与令牌，避免白屏闪烁。
+    -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

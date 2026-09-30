@@ -1,0 +1,145 @@
+# =============================================================================
+# AccountBook Desktop · 项目与工具链配置
+# -----------------------------------------------------------------------------
+# 说明：
+#   * 运行方式（开发）：仓库根目录执行 `python run.py`（无需安装，见 run.py 的路径注入）
+#   * 运行方式（安装）：`pip install -e .` 后执行 `accountbook`
+#   * 打包：由 packaging/accountbook.spec 驱动 PyInstaller，同样通过 pathex 注入 src
+#   * 需求 11：本文件中的依赖分组与工具配置均带注释，便于后续维护者理解取舍
+# =============================================================================
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "accountbook"
+version = "0.1.0"
+description = "本地优先、离线可用、Apple 美学的个人记账本桌面工具"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "AccountBook Desktop" }]
+keywords = ["accounting", "personal-finance", "desktop", "offline", "pyside-alternative"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: Chinese (Simplified)",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Accounting",
+]
+
+# -----------------------------------------------------------------------------
+# 运行时依赖
+# -----------------------------------------------------------------------------
+# 取舍说明：
+#   * pywebview + pythonnet：Windows 上以 Edge WebView2 作为渲染内核，
+#     复用系统运行时，避免打包整个 Chromium（体积从数百 MB 降到数十 MB）。
+#   * pystray + pillow：托盘常驻（P6 定时任务按时触发的前提），pillow 同时用于
+#     图标生成与后续截图导出。
+#   * 刻意不引入：Django/Flask（过重）、PyQt/PySide（与前端渲染层重复）、
+#     SQLCipher（P8 数据治理阶段再评估，避免过早增加本地编译依赖）。
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "httpx>=0.27",                    # 启动自检与 AI 调用的统一 HTTP 客户端
+    "pywebview>=5.3; sys_platform == 'win32'",
+    "pythonnet>=3.0; sys_platform == 'win32'",
+    "pystray>=0.19; sys_platform == 'win32'",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+# 开发与质量工具（P0 起即启用，规范见 docs/ARCHITECTURE.md）
+dev = [
+    "pyinstaller>=6.6",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.scripts]
+# 安装后可直接 `accountbook` 启动；开发期请使用 `python run.py`
+accountbook = "accountbook.__main__:main"
+
+[project.urls]
+Documentation = "docs/PLAN.md"
+
+# -----------------------------------------------------------------------------
+# setuptools：src 布局
+# -----------------------------------------------------------------------------
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# 前端构建产物与静态资源随包分发；web_dist 由 packaging/build_frontend.ps1 生成
+accountbook = ["resources/**/*", "resources/web_dist/**/*"]
+
+# -----------------------------------------------------------------------------
+# ruff：格式化与静态检查
+# -----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+exclude = [".venv", "build", "dist", "web/node_modules", "src/accountbook/resources/web_dist"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort（导入顺序）
+    "UP",  # pyupgrade（现代语法）
+    "B",   # flake8-bugbear（常见陷阱）
+    "SIM", # flake8-simplify
+    "BLE", # flake8-blind-except（裸 except / except Exception 需显式标注理由）
+    "RUF", # ruff 自有规则
+]
+ignore = [
+    "E501",    # 行长度由 formatter 负责，避免与中文注释冲突
+    "RUF001",  # 全角标点：本项目为中文注释代码库，全角是刻意选择而非笔误
+    "RUF002",  # 同上（docstring）
+    "RUF003",  # 同上（注释）
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # 测试中允许 assert
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# -----------------------------------------------------------------------------
+# pytest
+# -----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]          # 免安装即可 import accountbook
+addopts = "-q --strict-markers"
+markers = [
+    "gui: 需要真实图形会话的测试（沙箱内会被自动跳过）",
+    "slow: 耗时较长的用例",
+]
+
+# -----------------------------------------------------------------------------
+# mypy：仅在核心领域层启用严格模式（P1 起逐步扩大覆盖面）
+# -----------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = false   # 渐进式：P1 起对 accountbook.core.* 收紧
+ignore_missing_imports = true
+exclude = ["build", "dist", "web/"]

@@ -1,0 +1,44 @@
+# =============================================================================
+# Windows 可执行文件的版本资源
+# -----------------------------------------------------------------------------
+# 作用：在"文件属性 → 详细信息"里显示产品名、版本、版权，
+#       也是任务管理器与安装程序识别程序身份的依据。
+#
+# 编码说明：StringTable 的键 '080404B0' = 语言 0x0804（简体中文）+ 代码页 0x04B0（1200, Unicode）
+#           VarFileInfo 的 Translation 必须与此一致，否则部分系统上属性页会显示为空白。
+#
+# 维护要求：**版本号必须与 src/accountbook/__init__.py 的 __version__ 同步**。
+#           打包脚本 packaging/build_backend.ps1 会做一致性校验并在不一致时中止。
+# =============================================================================
+
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(0, 1, 0, 0),
+    prodvers=(0, 1, 0, 0),
+    mask=0x3F,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '080404B0',
+        [
+          StringStruct('CompanyName', 'AccountBook Desktop'),
+          StringStruct('FileDescription', '记账本 · 本地优先的个人财务工具'),
+          StringStruct('FileVersion', '0.1.0.0'),
+          StringStruct('InternalName', 'AccountBook'),
+          StringStruct('LegalCopyright', 'Copyright (C) 2026 AccountBook Desktop'),
+          StringStruct('OriginalFilename', 'AccountBook.exe'),
+          StringStruct('ProductName', '记账本 AccountBook'),
+          StringStruct('ProductVersion', '0.1.0.0'),
+          StringStruct('Comments', '本地存储，不上传云端；支持离线使用。')
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [2052, 1200])])
+  ]
+)

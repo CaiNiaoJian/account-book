@@ -1,0 +1,254 @@
+/* =============================================================================
+ * AccountBook · 设计令牌（Design Tokens）
+ * -----------------------------------------------------------------------------
+ * 这是整个界面**唯一**的颜色与质感来源（REQ-12 Apple 美学 / REQ-7 日夜切换）。
+ *
+ * 使用约定（务必遵守，否则主题系统会失效）：
+ *   1. 组件里禁止出现硬编码色值（`#fff` / `rgb(...)` / `text-white`）；
+ *      一律使用 Tailwind 语义类：`bg-surface`、`text-label-2`、`border-separator`…
+ *   2. 新增颜色必须先在此定义 `--ab-*` 变量，再在 tailwind.config.js 注册。
+ *   3. 变量值统一写成 **空格分隔的 RGB 三分量**（如 `245 245 247`），
+ *      不带 `rgb()` 包装 —— Tailwind 的 `<alpha-value>` 机制依赖这个格式，
+ *      这样 `bg-surface/60` 才能正确生成半透明色。
+ *
+ * 主题切换机制：
+ *   :root        → 浅色（默认）
+ *   .dark        → 深色（由 ThemeProvider 在 <html> 上切换 class）
+ *   跟随系统      → ThemeProvider 监听 prefers-color-scheme，自动写 class
+ * ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* ---- 背景层级：窗口底色 < 卡片 < 抬升容器 ---------------------------- */
+  --ab-bg: 245 245 247;          /* 窗口底色（Apple: windowBackgroundColor 浅色） */
+  --ab-bg-elevated: 255 255 255; /* 模态/抽屉等抬升背景 */
+  --ab-surface: 255 255 255;     /* 卡片表面 */
+  --ab-surface-2: 250 250 252;   /* 卡片内嵌区块 */
+  --ab-surface-3: 240 240 243;   /* 输入框/分段控件底槽 */
+
+  /* ---- 文本三级层次（Apple 的 label / secondaryLabel / tertiaryLabel） --- */
+  --ab-text: 29 29 31;
+  --ab-text-2: 110 110 115;
+  --ab-text-3: 142 142 147;
+
+  /* ---- 分隔线：浅色下偏冷灰，保持"若有若无" ---------------------------- */
+  --ab-separator: 209 209 214;
+
+  /* ---- 品牌与语义色（Apple 系统色 · 浅色变体） ------------------------- */
+  --ab-accent: 0 122 255;        /* systemBlue */
+  --ab-accent-hover: 0 106 224;
+  --ab-positive: 52 199 89;      /* systemGreen —— 收入 */
+  --ab-negative: 255 59 48;      /* systemRed   —— 支出 */
+  --ab-warning: 255 149 0;       /* systemOrange */
+  --ab-info: 50 173 230;         /* systemTeal-ish */
+  --ab-purple: 175 82 222;
+  --ab-pink: 255 45 85;
+  --ab-indigo: 88 86 214;
+  --ab-teal: 48 176 199;
+  --ab-mint: 0 199 190;
+  --ab-orange: 255 149 0;
+  --ab-yellow: 255 204 0;
+
+  /* ---- 图表专用（P2 起被 ECharts 主题读取） ---------------------------- */
+  --ab-chart-1: 0 122 255;
+  --ab-chart-2: 52 199 89;
+  --ab-chart-3: 255 149 0;
+  --ab-chart-4: 175 82 222;
+  --ab-chart-5: 255 45 85;
+  --ab-chart-6: 48 176 199;
+  --ab-chart-7: 255 204 0;
+  --ab-chart-8: 88 86 214;
+  --ab-chart-grid: 209 209 214;
+
+  /* ---- 材质与描边 ------------------------------------------------------ */
+  --ab-sidebar-bg: 246 246 248;  /* 侧边栏基色（配合 backdrop-blur 形成材质） */
+  --ab-toolbar-bg: 255 255 255;
+  --ab-hairline: 0 0 0;          /* 与低透明度配合，形成比 separator 更淡的线 */
+
+  /* ---- 焦点环（无障碍必需，REQ-7） ------------------------------------- */
+  --ab-focus-ring: 0 122 255;
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* 深色不是浅色的反相，而是**重新校准**：底更暗、层更亮、对比略降，
+     否则大面积纯黑会让长时间记账非常疲劳 */
+  --ab-bg: 28 28 30;
+  --ab-bg-elevated: 44 44 46;
+  --ab-surface: 44 44 46;
+  --ab-surface-2: 58 58 60;
+  --ab-surface-3: 72 72 74;
+
+  --ab-text: 245 245 247;
+  --ab-text-2: 152 152 157;
+  --ab-text-3: 124 124 128;
+
+  --ab-separator: 66 66 69;
+
+  --ab-accent: 10 132 255;
+  --ab-accent-hover: 64 156 255;
+  --ab-positive: 48 209 88;
+  --ab-negative: 255 69 58;
+  --ab-warning: 255 159 10;
+  --ab-info: 100 210 255;
+  --ab-purple: 191 90 242;
+  --ab-pink: 255 55 95;
+  --ab-indigo: 94 92 230;
+  --ab-teal: 64 200 224;
+  --ab-mint: 99 230 226;
+  --ab-orange: 255 159 10;
+  --ab-yellow: 255 214 10;
+
+  --ab-chart-1: 10 132 255;
+  --ab-chart-2: 48 209 88;
+  --ab-chart-3: 255 159 10;
+  --ab-chart-4: 191 90 242;
+  --ab-chart-5: 255 55 95;
+  --ab-chart-6: 64 200 224;
+  --ab-chart-7: 255 214 10;
+  --ab-chart-8: 94 92 230;
+  --ab-chart-grid: 66 66 69;
+
+  --ab-sidebar-bg: 36 36 38;
+  --ab-toolbar-bg: 28 28 30;
+  --ab-hairline: 255 255 255;
+
+  --ab-focus-ring: 10 132 255;
+}
+
+/* =============================================================================
+ * 全局基础样式
+ * ========================================================================== */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: rgb(var(--ab-bg));
+  color: rgb(var(--ab-text));
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei UI', 'Microsoft YaHei', 'Source Han Sans SC', 'Noto Sans SC', sans-serif;
+  font-size: 15px;
+  line-height: 21px;
+  /* 中文在小字号下的渲染质量 */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* 桌面应用不应出现文本被误选中的整页拖蓝（输入区仍可选中） */
+  user-select: none;
+}
+
+/* 允许在内容区选择文本：金额、备注需要能被复制 */
+input,
+textarea,
+[contenteditable='true'],
+.ab-selectable {
+  user-select: text;
+}
+
+/* 主题切换过渡：只过渡颜色类属性，避免与布局动画冲突。
+   注意用 .ab-theme-transition 包裹而不是常驻，防止页面滚动时出现拖影。 */
+.ab-theme-transition,
+.ab-theme-transition * {
+  transition:
+    background-color 250ms cubic-bezier(0.32, 0.72, 0, 1),
+    border-color 250ms cubic-bezier(0.32, 0.72, 0, 1),
+    color 250ms cubic-bezier(0.32, 0.72, 0, 1),
+    fill 250ms cubic-bezier(0.32, 0.72, 0, 1) !important;
+}
+
+/* ---- 滚动条：细、半透明、悬停加深（Apple 风格） ------------------------ */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--ab-text-3) / 0.32);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(var(--ab-text-3) / 0.55);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---- 焦点可见性：默认去掉轮廓，键盘导航时再画焦点环（REQ-7 无障碍） ---- */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--ab-focus-ring) / 0.9);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* =============================================================================
+ * 无障碍：尊重系统的"减少动态效果"设置
+ * 用户一旦在 Windows 里选择减少动画，这里会**整体**关闭非必要动效。
+ * 同时提供 .ab-reduce-motion 供应用内开关使用（UserPreferences.reduce_motion）。
+ * ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.ab-reduce-motion *,
+.ab-reduce-motion *::before,
+.ab-reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+/* =============================================================================
+ * 通用工具类
+ * ========================================================================== */
+
+/* 毛玻璃材质：侧边栏、工具栏、悬浮面板共用 */
+.ab-material {
+  background-color: rgb(var(--ab-sidebar-bg) / 0.72);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+}
+
+/* 数字等宽：金额列表纵向对齐的关键，避免每一位宽度不同造成"跳动感" */
+.ab-tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* 骨架屏闪光 */
+.ab-skeleton {
+  background-image: linear-gradient(
+    90deg,
+    rgb(var(--ab-surface-3)) 25%,
+    rgb(var(--ab-surface-2)) 37%,
+    rgb(var(--ab-surface-3)) 63%
+  );
+  background-size: 200% 100%;
+  animation: ab-shimmer 1.6s linear infinite;
+}

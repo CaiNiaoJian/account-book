@@ -1,0 +1,17 @@
+{
+  "//": "AccountBook · CoreCLR 宿主配置（供 pythonnet / pywebview 使用）",
+  "//why": "pythonnet 默认的 CoreCLR 配置只引用 Microsoft.NETCore.App，其中不包含 System.Windows.Forms。pywebview 的 Windows 后端需要 WinForms，因此必须改为引用 Microsoft.WindowsDesktop.App（它包含 WPF 与 WinForms）。",
+  "//rollForward": "请求 6.0.0 并允许 LatestMajor 前滚，这样 .NET 6 / 7 / 8 / 9 … 任一已安装的桌面运行时都能满足，避免把版本要求写死在某一个小版本上。",
+  "//usage": "由 accountbook/shell/clr_runtime.py 通过环境变量 PYTHONNET_CORECLR_RUNTIME_CONFIG 指向本文件；用户显式设置过该变量时以其为准。",
+  "runtimeOptions": {
+    "tfm": "net6.0",
+    "rollForward": "LatestMajor",
+    "framework": {
+      "name": "Microsoft.WindowsDesktop.App",
+      "version": "6.0.0"
+    },
+    "configProperties": {
+      "System.Reflection.Metadata.MetadataUpdater.IsSupported": false
+    }
+  }
+}

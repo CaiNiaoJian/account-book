@@ -1,0 +1,88 @@
+/* 设计令牌（颜色变量的唯一来源）。
+   注意：CSS 规范要求 @import 必须位于其它规则之前，
+   否则打包器会给出警告甚至丢弃该导入 —— 因此在 @tailwind 之前。 */
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =============================================================================
+ * 组件层：把反复出现的 Apple 风格组合收敛成少量语义类。
+ * 这样做的收益是**视觉一致性可被审查** —— 改一处即全局生效，
+ * 而不是在几十个页面里各写一遍圆角与阴影。
+ * ========================================================================== */
+@layer components {
+  /* 卡片：白底 + 极淡描边 + 一级阴影 */
+  .ab-card {
+    @apply rounded-ab-lg border border-separator/50 bg-surface shadow-ab-1;
+  }
+
+  /* 可交互卡片：悬停轻微抬升（Apple 的"可点按"暗示） */
+  .ab-card-interactive {
+    @apply ab-card transition-all duration-ab2 ease-ab-standard;
+  }
+  .ab-card-interactive:hover {
+    @apply border-separator shadow-ab-2;
+    transform: translateY(-1px);
+  }
+
+  /* 侧边栏条目：选中态为圆角药丸，未选中悬停为极淡填充 */
+  .ab-nav-item {
+    @apply flex items-center gap-2.5 rounded-ab-sm px-2.5 py-[7px] text-ab-subhead font-medium
+           text-label-2 transition-colors duration-ab1 ease-ab-standard;
+  }
+  .ab-nav-item:hover {
+    @apply bg-hairline/5 text-label;
+  }
+  .ab-nav-item[data-active='true'],
+  .ab-nav-item.is-active {
+    @apply bg-accent/15 text-accent;
+  }
+  .dark .ab-nav-item[data-active='true'],
+  .dark .ab-nav-item.is-active {
+    @apply bg-accent/20 text-accent;
+  }
+  .ab-nav-item[data-disabled='true'] {
+    @apply opacity-60;
+  }
+
+  /* 主按钮：系统蓝、微渐变、按下时轻微缩放（iOS 手感） */
+  .ab-btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-ab-sm bg-accent px-3.5 py-[7px]
+           text-ab-subhead font-semibold text-white shadow-ab-1 transition-all duration-ab1
+           ease-ab-standard hover:bg-accent-hover active:scale-[0.975]
+           disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-accent
+           disabled:active:scale-100;
+  }
+
+  /* 次按钮：半透明填充，用于次级操作 */
+  .ab-btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-ab-sm bg-surface-3/80 px-3.5 py-[7px]
+           text-ab-subhead font-medium text-label transition-all duration-ab1 ease-ab-standard
+           hover:bg-surface-3 active:scale-[0.975] disabled:cursor-not-allowed disabled:opacity-45
+           disabled:active:scale-100;
+  }
+
+  /* 幽灵按钮：工具栏图标按钮 */
+  .ab-btn-ghost {
+    @apply inline-flex items-center justify-center rounded-ab-sm p-1.5 text-label-2 transition-colors
+           duration-ab1 ease-ab-standard hover:bg-hairline/5 hover:text-label active:scale-[0.94];
+  }
+
+  /* 分组标题：侧边栏小节标题 */
+  .ab-section-label {
+    @apply px-2.5 pb-1 pt-4 text-ab-caption font-semibold uppercase tracking-wider text-label-3;
+  }
+
+  /* KPI 数字：大号、等宽、紧凑字距 */
+  .ab-metric {
+    @apply ab-tnum text-ab-title1 font-semibold tracking-tight text-label;
+  }
+
+  /* 阶段徽标（需求 10：明确区分已实现与已预留） */
+  .ab-phase-badge {
+    @apply rounded-full bg-hairline/5 px-1.5 py-[1px] text-ab-caption2 font-semibold
+           uppercase tracking-wide text-label-3;
+  }
+}
