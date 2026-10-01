@@ -19,6 +19,7 @@
 
 import { motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import { Icon } from '@/components/Icon'
 import { Card, EmptyState, Kbd, Skeleton } from '@/components/ui'
@@ -34,6 +35,7 @@ import { displayMinor, formatTime, localDayKey, relativeDayLabel, weekdayShort }
 import { usePreferences } from '@/app/preferences'
 
 import { CategoryBadge, MoneyText, Modal } from '@/features/ledger/parts'
+import { BatchEditDialog } from '@/features/ledger/BatchEditDialog'
 import { QuickAddDialog, TransactionEditor } from '@/features/ledger/TransactionForms'
 import { useLedger } from '@/features/ledger/store'
 
@@ -69,6 +71,10 @@ export function TransactionsPage() {
   const { t } = useI18n()
   const { preferences } = usePreferences()
   const { status, accounts, categoryById, tags, refresh } = useLedger()
+  // 用 react-router 的 hook 而不是全局 location：后者在 SPA 里"恰好能用"，
+  // 但一旦将来引入 basename 或内存路由就会悄悄失效
+  const location = useLocation()
+  const navigate = useNavigate()
 
   const [view, setView] = useState<ViewMode>('list')
   /**
@@ -97,6 +103,37 @@ export function TransactionsPage() {
   const [editing, setEditing] = useState<Transaction | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [quickAddOpen, setQuickAddOpen] = useState(false)
+  /**
+   * 批量选择。用 Set 而不是数组：勾选/取消是热路径，
+   * `includes` 在几百行时会变成明显的卡顿。
+   */
+  const [selection, setSelection] = useState<Set<number>>(new Set())
+  const [batchOpen, setBatchOpen] = useState(false)
+  const [selectMode, setSelectMode] = useState(false)
+  const [batchNotice, setBatchNotice] = useState<string | null>(null)
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelection((previous) => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  /** 退出选择模式时清空选择：留着上一批的勾选是最容易造成误操作的残留 */
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false)
+    setSelection(new Set())
+  }, [])
+
+  // `/quick-add` 这个入口此前是坏的：导航点进去只是到了流水页，
+  // 对话框并不会打开。现在由页面读路径决定 —— 顺带让全局快捷键
+  // 只需要一次 navigate 就能唤起快捷记账。
+  const onQuickAddRoute = location.pathname === '/quick-add'
+  useEffect(() => {
+    if (onQuickAddRoute) setQuickAddOpen(true)
+  }, [onQuickAddRoute])
   const [deleting, setDeleting] = useState<Transaction | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -276,6 +313,28 @@ export function TransactionsPage() {
         </button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className="ab-chip"
+          data-active={selectMode}
+          onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+        >
+          <Icon name="check" size={12} />
+          {selectMode ? t('batch.exit') : t('batch.enter')}
+        </button>
+        {selectMode ? (
+          <button
+            type="button"
+            className="ab-chip"
+            onClick={() => setSelection(new Set(items.map((item) => item.id)))}
+          >
+            {t('batch.selectAll')}
+          </button>
+        ) : null}
+        {batchNotice ? <span className="text-ab-caption text-positive">{batchNotice}</span> : null}
+      </div>
+
       {/* 账户筛选 */}
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-ab-caption text-label-3">{t('ledger.account')}</span>
@@ -428,6 +487,9 @@ export function TransactionsPage() {
                         setEditorOpen(true)
                       }}
                       onDelete={() => setDeleting(item)}
+                      selectable={selectMode}
+                      selected={selection.has(item.id)}
+                      onToggleSelect={() => toggleSelect(item.id)}
                     />
                   ))}
                 </motion.div>
@@ -445,9 +507,65 @@ export function TransactionsPage() {
         </div>
       ) : null}
 
+      {selectMode ? (
+        <div className="fixed inset-x-0 bottom-4 z-30 mx-auto flex w-fit max-w-[92vw] items-center gap-2 rounded-full bg-surface px-3 py-2 shadow-ab-4 ring-1 ring-separator">
+          <span className="ab-tnum px-1 text-ab-footnote text-label-2">
+            {t('batch.selected', { count: selection.size })}
+          </span>
+          <button
+            type="button"
+            className="ab-btn-primary"
+            disabled={selection.size === 0}
+            onClick={() => setBatchOpen(true)}
+          >
+            <Icon name="edit" size={13} />
+            {t('batch.edit')}
+          </button>
+          <button
+            type="button"
+            className="ab-btn-secondary !text-negative"
+            disabled={selection.size === 0}
+            onClick={() => {
+              void api.batchDeleteTransactions([...selection]).then(async (report) => {
+                setBatchNotice(t('batch.deleted', { count: report.count }))
+                exitSelectMode()
+                await refresh()
+              })
+            }}
+          >
+            <Icon name="trash" size={13} />
+            {t('common.delete')}
+          </button>
+          <button type="button" className="ab-btn-ghost" onClick={exitSelectMode}>
+            {t('batch.exit')}
+          </button>
+        </div>
+      ) : null}
+
+      <BatchEditDialog
+        ids={[...selection]}
+        open={batchOpen}
+        onClose={() => setBatchOpen(false)}
+        onDone={(report) => {
+          setBatchOpen(false)
+          exitSelectMode()
+          setBatchNotice(
+            report.skipped.length > 0
+              ? t('batch.appliedWithSkipped', { count: report.count, skipped: report.skipped.length })
+              : t('batch.applied', { count: report.count }),
+          )
+          void refresh()
+        }}
+      />
+
       <QuickAddDialog
         open={quickAddOpen}
-        onClose={() => setQuickAddOpen(false)}
+        onClose={() => {
+          setQuickAddOpen(false)
+          // 关掉之后回到流水页：否则 URL 停在 /quick-add 上，
+          // 刷新或前进后退会把对话框又弹出来
+          if (onQuickAddRoute) navigate('/transactions', { replace: true })
+        }}
         onSaved={() => void Promise.all([load(), refresh()])}
       />
       <TransactionEditor
@@ -500,16 +618,54 @@ interface RowProps {
   transferLike: boolean
   onEdit: () => void
   onDelete: () => void
+  /** 批量选择模式：整行点击变为切换勾选，而不是打开编辑器 */
+  selectable?: boolean
+  selected?: boolean
+  onToggleSelect?: () => void
 }
 
-function TransactionRow({ item, category, transferLike, onEdit, onDelete }: RowProps) {
+function TransactionRow({
+  item,
+  category,
+  transferLike,
+  onEdit,
+  onDelete,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+}: RowProps) {
   const { t } = useI18n()
   const { tagByName } = useLedger()
   const tone = item.type === 'income' ? 'income' : item.type === 'expense' ? 'expense' : 'neutral'
   const signed = item.type === 'expense' ? -item.amount_minor : item.amount_minor
 
   return (
-    <div className="ab-row group">
+    <div
+      className={`ab-row group ${selectable ? 'cursor-pointer' : ''} ${selected ? 'bg-accent/8' : ''}`}
+      {...(selectable
+        ? {
+            role: 'button',
+            tabIndex: 0,
+            onClick: () => onToggleSelect?.(),
+            onKeyDown: (event: React.KeyboardEvent) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onToggleSelect?.()
+              }
+            },
+          }
+        : {})}
+    >
+      {selectable ? (
+        <span
+          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border ${
+            selected ? 'border-accent bg-accent text-white' : 'border-separator'
+          }`}
+          aria-hidden
+        >
+          {selected ? <Icon name="check" size={11} /> : null}
+        </span>
+      ) : null}
       <CategoryBadge category={category} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">

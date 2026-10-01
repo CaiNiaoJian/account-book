@@ -1024,6 +1024,45 @@ export const api = {
     request<{ months: string[]; rows: CategoryTrendRow[] }>(
       `/api/stats/category-trend${query({ months })}`,
     ),
+  // ---- P1 尾巴：回收站 ------------------------------------------------------
+  /** 回收站概览：每个实体各有多少条（一次返回，界面要显示汇总） */
+  trashSummary: () => request<TrashSummary>('/api/trash'),
+  trashList: (entity: string, params: { limit?: number; offset?: number } = {}) =>
+    request<TrashList>(`/api/trash/${entity}${query(params)}`),
+  /**
+   * 恢复一条。走各领域服务的 restore（恢复流水要重算日结），
+   * 因此恢复后日历与 K 线会立刻跟上。
+   */
+  trashRestore: (entity: string, id: number) =>
+    request<TrashItem>(`/api/trash/${entity}/${id}/restore`, { method: 'POST' }),
+  /**
+   * 彻底删除。有**外部**引用时后端返回 409 并写明被谁引用；
+   * 分账、流水标签这类"组成部分"会自动一起删除。
+   */
+  trashPurge: (entity: string, id: number) =>
+    request<void>(`/api/trash/${entity}/${id}`, { method: 'DELETE' }),
+
+  /** 批量修改流水（只应用显式给出的字段，因此 null 与省略是两件事） */
+  batchUpdateTransactions: (payload: {
+    ids: number[]
+    category_id?: number | null
+    project_id?: number | null
+    member_id?: number | null
+    status?: string | null
+    tag_ids?: number[]
+    add_tag_ids?: number[]
+  }) =>
+    request<BatchReport>('/api/transactions/batch', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  /** 批量删除流水（软删除，可从回收站恢复） */
+  batchDeleteTransactions: (ids: number[]) =>
+    request<BatchDeleteReport>('/api/transactions/batch-delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
+
   /** 指标参数。口径说明页直接渲染它，参数一改说明页自动跟着变 */
   klineParams: () => request<KlineParams>('/api/kline/params'),
 
@@ -1084,6 +1123,38 @@ export interface RepaymentPlan {
   has_plan: boolean
   /** 恒为真：分摊表是估算 */
   is_estimate: boolean
+}
+
+export interface TrashItem {
+  entity: string
+  id: number
+  title: string
+  subtitle: string
+  deleted_at: string | null
+}
+
+export interface TrashList {
+  entity: string
+  items: TrashItem[]
+  total: number
+}
+
+export interface TrashSummary {
+  entities: { entity: string; count: number }[]
+  total: number
+}
+
+export interface BatchReport {
+  updated: number[]
+  /** 被跳过的 id 与原因 —— 用户选中 10 笔只改了 8 笔时必须知道为什么 */
+  skipped: { id: number; reason: string }[]
+  count: number
+}
+
+export interface BatchDeleteReport {
+  deleted: number[]
+  skipped: { id: number; reason: string }[]
+  count: number
 }
 
 export interface CategoryTrendRow {

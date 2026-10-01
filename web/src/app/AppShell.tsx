@@ -13,8 +13,8 @@
  */
 
 import { AnimatePresence, motion } from 'framer-motion'
-import { useMemo } from 'react'
-import { useLocation, useOutlet } from 'react-router-dom'
+import { useEffect, useMemo } from 'react'
+import { useLocation, useNavigate, useOutlet } from 'react-router-dom'
 
 import { pageVariants } from '@/design/motion'
 import { useI18n } from '@/i18n'
@@ -23,7 +23,58 @@ import { usePreferences } from './preferences'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
 
+/**
+ * 应用内全局快捷键。
+ *
+ * 范围说明：这些快捷键在**应用窗口聚焦时**全局生效，任何页面都能唤起
+ * 快捷记账。真正的"操作系统级热键"（应用在后台也能唤起）需要
+ * Windows `RegisterHotKey`，本环境无法交互式验证，因此没有做 ——
+ * 与其交付一个没验证过的热键注册，不如把这一条明确留在文档里。
+ *
+ * 刻意避开 `Ctrl+C/V/A/F` 这些浏览器与输入框自带的组合，
+ * 也刻意在输入框内不拦截：用户正在打字时抢快捷键是最恼人的一类 bug。
+ */
+function useGlobalShortcuts() {
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const typing =
+        target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable
+      const modifier = event.metaKey || event.ctrlKey
+      if (!modifier || event.altKey) return
+
+      const key = event.key.toLowerCase()
+      if (key === 'k') {
+        // 快捷记账：即使正在输入也允许（它是"我现在要记一笔"的强意图），
+        // 但仍然阻止浏览器默认的"聚焦地址栏"
+        event.preventDefault()
+        navigate('/quick-add')
+        return
+      }
+      if (typing) return
+      if (key === 'l') {
+        event.preventDefault()
+        navigate('/transactions')
+      } else if (key === '1') {
+        event.preventDefault()
+        navigate('/')
+      } else if (key === '2') {
+        event.preventDefault()
+        navigate('/statistics')
+      } else if (key === '3') {
+        event.preventDefault()
+        navigate('/calendar')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [navigate])
+}
+
 export function AppShell() {
+  useGlobalShortcuts()
   const { t } = useI18n()
   const location = useLocation()
   const outlet = useOutlet()

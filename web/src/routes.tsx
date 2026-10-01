@@ -26,6 +26,7 @@ import { CardsPage } from '@/pages/Cards'
 import { KlinePage } from '@/pages/Kline'
 import { MetricsPage } from '@/pages/Metrics'
 import { BudgetsPage, DebtsPage, RecurringPage } from '@/pages/Planning'
+import { TrashPage } from '@/pages/Trash'
 import { CategoriesPage } from '@/pages/Categories'
 import { DashboardPage } from '@/pages/Dashboard'
 import { PlaceholderPage } from '@/pages/Placeholder'
@@ -49,6 +50,7 @@ const IMPLEMENTED_ROUTES: Record<string, ReactNode> = {
   '/budgets': <BudgetsPage />,
   '/recurring': <RecurringPage />,
   '/debts': <DebtsPage />,
+  '/trash': <TrashPage />,
   '/tags': <TagsProjectsPage />,
   '/settings': <SettingsPage />,
   '/about': <AboutPage />,

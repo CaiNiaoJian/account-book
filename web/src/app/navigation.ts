@@ -57,6 +57,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: 'categories', path: '/categories', icon: 'categories', phase: 'P1' },
       { id: 'tagsProjects', path: '/tags', icon: 'tags', phase: 'P1' },
       { id: 'recurring', path: '/recurring', icon: 'recurring', phase: 'P1' },
+      // 回收站紧挨着流水：用户找它时的心理位置是「我刚才删掉的那笔账」
+      { id: 'trash', path: '/trash', icon: 'trash', phase: 'P1' },
       { id: 'budgets', path: '/budgets', icon: 'budgets', phase: 'P1' },
       { id: 'piggy', path: '/piggy', icon: 'piggy', phase: 'P4' },
       { id: 'debts', path: '/debts', icon: 'debts', phase: 'P1' },
