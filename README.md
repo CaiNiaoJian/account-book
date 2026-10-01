@@ -177,6 +177,13 @@ ECharts 图表（Apple 主题随日夜切换）。
 体积上限 + 路径穿越防护）、私人卡面图片上传、列表 FLIP 动效、
 K 线区间框选对比、应用内全局快捷键（`Ctrl/Cmd+K`）。
 
+**P5 已可用**：台账（期初 + 逐笔滚动余额 + 期末，**余额连续性校验**与试算平衡，
+对账可生成调整分录，可打印）、报告引擎（`ReportDocument` 单一 Schema，
+日/周/月/年/自定义区间，同比环比、结构分解、异常洞察）、
+四种导出（PDF 内嵌中文 / 自包含 HTML / Markdown / PNG 摘要图）、
+AI 分析（SSE 流式，**没配 key 或断网时自动回落到离线规则并明确标注来源**）。
+验收记录见 [docs/ACCEPTANCE_P5.md](docs/ACCEPTANCE_P5.md)。
+
 界面截图见 [docs/screenshots](docs/screenshots)。
 
 ---
