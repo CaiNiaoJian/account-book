@@ -1053,3 +1053,195 @@ class AiAnalysis(Base, TimestampMixin):
     #: 离线回落的原因：no_key / disabled / network / timeout / server / bad_response
     fallback_reason: Mapped[str] = mapped_column(String(24), nullable=False, default="")
     error: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+# -----------------------------------------------------------------------------
+# P6：工作日日历
+# -----------------------------------------------------------------------------
+class WorkdayCalendar(Base, TimestampMixin):
+    """逐日的工作日覆盖。
+
+    只存**例外**，不存全年 365 天：
+    * 周末与工作日的默认规则由代码算（`services/workdays.py`）；
+    * 这里存的是"某个本该休息的日子要上班"（调休）与
+      "某个本该上班的日子放假"（法定节假日）。
+
+    存全年的坏处不只是体积：一旦铺满了数据，
+    "这一天是被明确标记还是默认推断"就再也分不清了，
+    而这两者的可信度完全不同。
+    """
+
+    __tablename__ = "workday_calendar"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('holiday', 'makeup_workday', 'custom_rest', 'custom_workday')",
+            name="kind",
+        ),
+        CheckConstraint("source IN ('builtin', 'user_import', 'user_edit')", name="source"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: 日期唯一：一天只能有一个说法，否则"这天到底上不上班"就没有答案
+    day: Mapped[date] = mapped_column(Date, nullable=False, unique=True, index=True)
+    is_workday: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    #: holiday=法定节假日；makeup_workday=调休上班；custom_*=用户自定义
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: 假期名称（春节、国庆…）
+    name: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="user_import")
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+# -----------------------------------------------------------------------------
+# P6：发薪
+# -----------------------------------------------------------------------------
+class PaySource(Base, TimestampMixin, SoftDeleteMixin):
+    """薪资来源：一家公司、一份兼职、一笔租金收入。
+
+    **多来源是一等公民**，不是"给同一份工资改个名字"：
+    不同来源的入账账户、发薪日、组成项都可能不同，
+    而合在一起记会让"我这份工作今年涨了多少"变得无法回答。
+    """
+
+    __tablename__ = "pay_sources"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('salary', 'part_time', 'bonus', 'investment', 'rent', 'other')",
+            name="kind",
+        ),
+        CheckConstraint("priority BETWEEN 0 AND 9", name="priority"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="salary")
+    employer: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    #: 默认入账账户。为空时收录表要求用户逐次指定 —— 不给默认值比给错的好
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class PayComponent(Base, TimestampMixin):
+    """薪资组成模板项：基本工资 / 绩效 / 加班费 / 餐补 / 个税 / 五险一金代扣……
+
+    `calc` 决定金额怎么来：
+    * `fixed`   —— 固定金额；
+    * `ratio`   —— 按某个基数（应发合计 / 基本工资）的比例；
+    * `formula` —— 自定义算式（JSON 描述的表达式树，见 `services/payroll.py`）。
+
+    **公式用 JSON 而不是字符串求值**：`eval()` 会把"我自己的工资表"
+    变成一个可执行任意代码的入口，而那份数据是可以被导入的。
+    """
+
+    __tablename__ = "pay_components"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('basic', 'performance', 'overtime', 'meal', 'transport', "
+            "'bonus', 'commission', 'reimbursement', 'pretax_deduction', "
+            "'tax', 'insurance', 'other')",
+            name="kind",
+        ),
+        CheckConstraint("calc IN ('fixed', 'ratio', 'formula')", name="calc"),
+        # 加项与减项决定了它进"应发"还是从"应发"里扣
+        CheckConstraint("sign IN (1, -1)", name="sign"),
+        CheckConstraint("amount_minor >= 0", name="amount"),
+        CheckConstraint("rate_bps BETWEEN 0 AND 100000", name="rate"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("pay_sources.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(48), nullable=False)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False, default="other")
+    calc: Mapped[str] = mapped_column(String(12), nullable=False, default="fixed")
+    #: 1 = 加项（进应发），-1 = 减项（从应发里扣，如个税与五险一金代扣）
+    sign: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: ratio 的基数：'gross'（应发合计）/ 'basic'（基本工资合计）
+    base_key: Mapped[str] = mapped_column(String(16), nullable=False, default="basic")
+    #: 万分比，整数存避免浮点误差（1000 = 10%）
+    rate_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: formula 的表达式树（JSON）
+    formula: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class PaydayRule(Base, TimestampMixin):
+    """发薪规则。
+
+    一个规则管一个来源的"什么时候发"。`day` 支持四种写法：
+    具体日 / 月末 / 当月末个工作日 / 当月第 N 个工作日。
+    """
+
+    __tablename__ = "payday_rules"
+    __table_args__ = (
+        CheckConstraint(
+            "day_kind IN ('fixed', 'month_end', 'last_workday', 'nth_workday')",
+            name="day_kind",
+        ),
+        CheckConstraint("weekend_policy IN ('advance', 'postpone', 'none')", name="weekend_policy"),
+        CheckConstraint("holiday_policy IN ('advance', 'postpone', 'none')", name="holiday_policy"),
+        CheckConstraint("grace_days BETWEEN 0 AND 30", name="grace"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("pay_sources.id"), nullable=False, index=True)
+    #: 具体日（1–31）。31 表示"当月最后一天"，与 day_kind='month_end' 等价但更好输入
+    day_of_month: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    day_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="fixed")
+    #: day_kind='nth_workday' 时的 N（第几个工作日）
+    nth: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    #: 遇周末：提前到之前最近的工作日 / 顺延到之后最近的工作日 / 不调整
+    weekend_policy: Mapped[str] = mapped_column(String(12), nullable=False, default="advance")
+    #: 遇法定节假日：同上。默认与周末同策略
+    holiday_policy: Mapped[str] = mapped_column(String(12), nullable=False, default="advance")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: 提前提醒的时刻（HH:MM），空表示不提醒
+    remind_at: Mapped[str] = mapped_column(String(5), nullable=False, default="09:00")
+    #: 宽限天数：超过这么多天还没填工资收录表就升级提醒
+    grace_days: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    #: 是否强制填写工资收录表（关闭则只记一笔流水）
+    require_form: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class PayrollRecord(Base, TimestampMixin, SoftDeleteMixin):
+    """工资收录表的一条记录。
+
+    组成明细用 JSON 存**快照**而不是外键指向 `pay_components`：
+    模板会变（涨薪、改比例），而"去年 3 月那笔是怎么算出来的"
+    必须能原样复现。指向模板等于让历史随模板一起变。
+    """
+
+    __tablename__ = "payroll_records"
+    __table_args__ = (
+        CheckConstraint("status IN ('draft', 'filled', 'skipped')", name="status"),
+        CheckConstraint("gross_minor >= 0 AND net_minor >= 0", name="amounts"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("pay_sources.id"), nullable=False, index=True)
+    #: 归属期间，形如 '2026-10'。用字符串而不是日期：
+    #: "10 月的工资"是一个期间概念，硬塞一个日期会在跨月发放时产生歧义
+    period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    pay_date: Mapped[date] = mapped_column(Date, nullable=False)
+    #: 应发合计（各加项之和）
+    gross_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 实发 = 应发 − 各减项之和
+    net_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 逐项明细快照：[{name, kind, sign, amount_minor, calc, ...}]
+    items: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    #: 五险一金代扣快照（P6 后续接入 insurance 时填写）
+    insurance_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    tax_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 记入账目的流水
+    transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="draft")
+    #: 跳过原因（本月跳过必须留痕，见 PLAN 的"合规出口"设计）
+    skip_reason: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    filled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
