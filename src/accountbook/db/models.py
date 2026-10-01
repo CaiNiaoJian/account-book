@@ -852,3 +852,174 @@ class Attachment(Base, TimestampMixin):
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     #: 内容哈希：重复上传时用于去重，也让"文件被换过"可被检测
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+
+
+# -----------------------------------------------------------------------------
+# P4：存钱罐与储蓄目标
+# -----------------------------------------------------------------------------
+class PiggyBank(Base, TimestampMixin, SoftDeleteMixin):
+    """存钱罐（需求 16）。
+
+    余额**不落库**：由 `piggy_bank_deposits` 求和得出 —— 与流水一致的做法。
+    存一个 `balance_minor` 列意味着每笔存入都要记得更新它，
+    而总有一次会忘了（导入、插件、手工改库），然后就再也对不上账。
+    """
+
+    __tablename__ = "piggy_banks"
+    __table_args__ = (
+        CheckConstraint("kind IN ('one_time', 'long_term', 'shared')", name="kind"),
+        CheckConstraint("status IN ('active', 'achieved', 'paused', 'abandoned')", name="status"),
+        CheckConstraint("target_amount_minor > 0", name="target"),
+        CheckConstraint("priority BETWEEN 0 AND 9", name="priority"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    #: 要买的东西（"一台相机"），与罐子名分开 —— 罐子名可能是"旅游基金"
+    target_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    #: 目标图片（附件表里 kind='piggy' 的那条）。可空：多数罐子用皮肤配色即可
+    target_amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default=DEFAULT_CURRENCY)
+    deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="one_time")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id"), nullable=True)
+    #: 0–9，数字越大越优先（与列表排序方向一致，避免"1 是最重要"这种反直觉）
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    #: 罐体外观主题（classic / glass / ceramic / vault …）
+    skin: Mapped[str] = mapped_column(String(24), nullable=False, default="classic")
+    #: 隐私模式：只显示百分比，不显示金额
+    hide_amount: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: 可选的上级储蓄目标：先攒零钱、够了再一次性注入目标
+    goal_id: Mapped[int | None] = mapped_column(ForeignKey("goals.id"), nullable=True, index=True)
+    achieved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #: 是否已播放过达成庆祝。分开记是为了"刷新页面不重放礼花"
+    celebrated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class PiggyBankRule(Base, TimestampMixin):
+    """自动归集规则。一个罐子最多一条（`piggy_bank_id` 唯一）。
+
+    一个罐子挂多条规则会让"这笔 3.2 元到底是哪条规则归集的"变得说不清，
+    而用户看到罐子里多了一笔钱时**一定**会问这个问题。
+    需要多条时建多个罐子 —— 那也是更清晰的账目。
+    """
+
+    __tablename__ = "piggy_bank_rules"
+    __table_args__ = (
+        CheckConstraint(
+            "strategy IN ('roundup', 'daily_fixed', 'weekly_fixed', "
+            "'income_percent', 'monthly_surplus', 'category_trigger')",
+            name="strategy",
+        ),
+        CheckConstraint("fixed_amount_minor >= 0", name="fixed"),
+        CheckConstraint("percent_bps BETWEEN 0 AND 10000", name="percent"),
+        CheckConstraint("roundup_unit_minor > 0", name="roundup_unit"),
+        UniqueConstraint("piggy_bank_id", name="uq_piggy_bank_rules_bank"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    piggy_bank_id: Mapped[int] = mapped_column(ForeignKey("piggy_banks.id"), nullable=False, index=True)
+    strategy: Mapped[str] = mapped_column(String(24), nullable=False, default="roundup")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: 四舍五入到多少（100 = 补到整元，1000 = 补到整十元）
+    roundup_unit_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    #: 定额归集（每日/每周）的金额
+    fixed_amount_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 收入百分比，单位为基点（100 = 1%）。用整数存避免浮点误差
+    percent_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 分类触发时的分类 id 列表（JSON 数组文本）。派生的多对多，
+    #: 与模板的 tag_ids 同样处理：这是一份"配置"而不是需要外键约束的关系
+    category_ids: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    #: 从哪个账户扣。为空且 deduct_from_account 为真时为配置错误，校验时拦住
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    #: 归集时是否同时生成一笔"转账到罐子"的流水（从账户余额里真的扣掉）
+    deduct_from_account: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: 上次执行日期。**幂等靠它**：同一天重复触达不会重复归集 ——
+    #: 应用可能一天被开关很多次，而"多攒了一笔"用户很难发现
+    last_run_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class PiggyBankDeposit(Base, TimestampMixin):
+    """罐子的一笔进出。正=存入，负=取出。
+
+    用**一张表 + 带符号金额**而不是"存入表 + 取出表"：罐子余额是求和，
+    分成两张表后每次都要相减，而漏掉一边的 bug 会表现为"余额永远偏高"。
+    """
+
+    __tablename__ = "piggy_bank_deposits"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('manual', 'auto', 'roundup', 'change', 'milestone', 'withdraw', 'settle')",
+            name="kind",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    piggy_bank_id: Mapped[int] = mapped_column(ForeignKey("piggy_banks.id"), nullable=False, index=True)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: 用户看到的本地墙上时间（与流水同一套双时间语义）
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    tz_offset_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    #: 回链到产生这笔存款的流水（四舍五入归集时指向那笔消费）
+    transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transactions.id"), nullable=True, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class Goal(Base, TimestampMixin, SoftDeleteMixin):
+    """储蓄目标。
+
+    进度 = （指定账户的**实时余额**）+（手工注入之和）。
+    刻意不落库：账户余额本身是从流水聚合出来的，把它的快照再存一份
+    会立刻产生"两处不一致时信谁"的问题。
+    """
+
+    __tablename__ = "goals"
+    __table_args__ = (
+        CheckConstraint("kind IN ('purchase', 'emergency', 'travel', 'education', 'other')", name="kind"),
+        CheckConstraint("status IN ('active', 'achieved', 'paused', 'abandoned')", name="status"),
+        CheckConstraint("target_amount_minor > 0", name="target"),
+        CheckConstraint("priority BETWEEN 0 AND 9", name="priority"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    target_amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default=DEFAULT_CURRENCY)
+    deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="purchase")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    #: 进度来源：该账户的实时余额。为空则只看手工注入
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id"), nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    hide_amount: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    achieved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    celebrated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class GoalContribution(Base, TimestampMixin):
+    """对储蓄目标的手工注入（钱不在任何账户里时用）。
+
+    与罐子的存入分开一张表：目标的注入是"往一个数上记账"，
+    罐子的存入是"往罐子里放硬币"，两者的界面、语义与取出规则都不同。
+    共用一个表会让 `kind` 的取值变成两套语义的并集，
+    而每次查询都要额外过滤——那才是真正的重复。
+    """
+
+    __tablename__ = "goal_contributions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    goal_id: Mapped[int] = mapped_column(ForeignKey("goals.id"), nullable=False, index=True)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    tz_offset_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
