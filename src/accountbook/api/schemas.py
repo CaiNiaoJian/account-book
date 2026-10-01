@@ -846,6 +846,261 @@ class AttachmentOut(BaseModel):
 
 
 # -----------------------------------------------------------------------------
+# P4：存钱罐与储蓄目标
+# -----------------------------------------------------------------------------
+class PiggyBankCreate(RequestModel):
+    name: str = Field(min_length=1, max_length=80)
+    target_amount_minor: int = Field(gt=0)
+    target_name: str = Field(default="", max_length=120)
+    currency: str = Field(default="CNY", max_length=8)
+    deadline: date | None = None
+    kind: Literal["one_time", "long_term", "shared"] = "one_time"
+    member_id: int | None = None
+    priority: int = Field(default=5, ge=0, le=9)
+    skin: str = Field(default="classic", max_length=24)
+    hide_amount: bool = False
+    goal_id: int | None = None
+    note: str = Field(default="", max_length=200)
+    #: 建罐时就放一笔进去（"这个罐子里已经有 200 了"），
+    #: 免得用户要先建罐、再手动存一次
+    initial_minor: int = 0
+
+
+class PiggyBankUpdate(RequestModel):
+    """全部可选。路由用 `exclude_unset=True` 区分"没传"与"传了 null"。"""
+
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    target_name: str | None = Field(default=None, max_length=120)
+    target_amount_minor: int | None = Field(default=None, gt=0)
+    currency: str | None = Field(default=None, max_length=8)
+    deadline: date | None = None
+    kind: Literal["one_time", "long_term", "shared"] | None = None
+    status: Literal["active", "achieved", "paused", "abandoned"] | None = None
+    member_id: int | None = None
+    priority: int | None = Field(default=None, ge=0, le=9)
+    skin: str | None = Field(default=None, max_length=24)
+    hide_amount: bool | None = None
+    goal_id: int | None = None
+    note: str | None = Field(default=None, max_length=200)
+    sort_order: int | None = None
+    celebrated: bool | None = None
+
+
+class PiggyDepositRequest(RequestModel):
+    #: 正=存入，负=取出
+    amount_minor: int
+    kind: Literal["manual", "auto", "roundup", "change", "milestone", "withdraw", "settle"] = "manual"
+    occurred_at: datetime | None = None
+    tz_offset_minutes: int = 0
+    source_account_id: int | None = None
+    transaction_id: int | None = None
+    note: str = Field(default="", max_length=200)
+
+
+class PiggyRuleRequest(RequestModel):
+    strategy: Literal[
+        "roundup",
+        "daily_fixed",
+        "weekly_fixed",
+        "income_percent",
+        "monthly_surplus",
+        "category_trigger",
+    ]
+    enabled: bool = True
+    roundup_unit_minor: int = Field(default=100, gt=0)
+    fixed_amount_minor: int = Field(default=0, ge=0)
+    percent_bps: int = Field(default=0, ge=0, le=10000)
+    category_ids: list[int] = Field(default_factory=list)
+    account_id: int | None = None
+    deduct_from_account: bool = False
+
+
+class PiggyRuleRunRequest(RequestModel):
+    today: date | None = None
+    #: 预览而不落库：对自动扣钱的功能来说"先执行再看结果"不可接受
+    dry_run: bool = True
+
+
+class PiggySettleRequest(RequestModel):
+    settle: bool = True
+    account_id: int | None = None
+    occurred_at: datetime | None = None
+    create_transaction: bool = True
+
+
+class PiggyInjectRequest(RequestModel):
+    goal_id: int | None = None
+    settle_bank: bool = True
+    occurred_at: datetime | None = None
+
+
+class PiggyGoalCreate(RequestModel):
+    name: str = Field(min_length=1, max_length=80)
+    target_amount_minor: int = Field(gt=0)
+    currency: str = Field(default="CNY", max_length=8)
+    deadline: date | None = None
+    kind: Literal["purchase", "emergency", "travel", "education", "other"] = "purchase"
+    account_id: int | None = None
+    member_id: int | None = None
+    priority: int = Field(default=5, ge=0, le=9)
+    hide_amount: bool = False
+    note: str = Field(default="", max_length=200)
+
+
+class PiggyGoalUpdate(RequestModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    target_amount_minor: int | None = Field(default=None, gt=0)
+    currency: str | None = Field(default=None, max_length=8)
+    deadline: date | None = None
+    kind: Literal["purchase", "emergency", "travel", "education", "other"] | None = None
+    status: Literal["active", "achieved", "paused", "abandoned"] | None = None
+    account_id: int | None = None
+    member_id: int | None = None
+    priority: int | None = Field(default=None, ge=0, le=9)
+    hide_amount: bool | None = None
+    note: str | None = Field(default=None, max_length=200)
+    sort_order: int | None = None
+    celebrated: bool | None = None
+
+
+class PiggyContributeRequest(RequestModel):
+    amount_minor: int
+    occurred_at: datetime | None = None
+    tz_offset_minutes: int = 0
+    note: str = Field(default="", max_length=200)
+
+
+class DepositOut(BaseModel):
+    id: int
+    piggy_bank_id: int
+    amount_minor: int
+    occurred_at: str
+    tz_offset_minutes: int
+    source_account_id: int | None = None
+    transaction_id: int | None = None
+    kind: str
+    note: str
+
+
+class DepositListOut(BaseModel):
+    items: list[DepositOut]
+    count: int
+    balance_minor: int
+
+
+class PiggyRuleOut(BaseModel):
+    id: int
+    piggy_bank_id: int
+    strategy: str
+    enabled: bool
+    roundup_unit_minor: int
+    fixed_amount_minor: int
+    percent_bps: int
+    category_ids: list[int]
+    account_id: int | None = None
+    deduct_from_account: bool
+    last_run_date: str | None = None
+
+
+class BankOut(BaseModel):
+    id: int
+    name: str
+    target_name: str
+    target_amount_minor: int
+    balance_minor: int
+    currency: str
+    deadline: str | None = None
+    kind: str
+    status: str
+    member_id: int | None = None
+    priority: int
+    skin: str
+    hide_amount: bool
+    goal_id: int | None = None
+    achieved_at: str | None = None
+    celebrated: bool
+    sort_order: int
+    note: str
+    ratio: float
+    milestones: list[int]
+    deleted_at: str | None = None
+    rule: PiggyRuleOut | None = None
+    #: 双口径预计达成日。字段结构随状态变化（未达成 / 已达成），
+    #: 因此用自由字典 —— 强行建模成一个固定形状会让"已达成时没有这些键"
+    #: 变成校验错误，而那是最常见的一种正常状态
+    eta: dict[str, Any] | None = None
+    #: 结清 / 注入后附加的结果字段
+    settled_minor: int | None = None
+    injected_minor: int | None = None
+
+
+class BankDetailOut(BankOut):
+    deposits: list[DepositOut] = Field(default_factory=list)
+
+
+class BankListOut(BaseModel):
+    items: list[BankOut]
+    count: int
+    active_target_minor: int
+    saved_minor: int
+
+
+class PiggyActionOut(BaseModel):
+    items: list[dict[str, Any]]
+    count: int
+    total_minor: int
+    dry_run: bool
+
+
+class ContributionOut(BaseModel):
+    id: int
+    goal_id: int
+    amount_minor: int
+    occurred_at: str
+    tz_offset_minutes: int
+    note: str
+
+
+class GoalOut(BaseModel):
+    id: int
+    name: str
+    target_amount_minor: int
+    saved_minor: int
+    currency: str
+    deadline: str | None = None
+    kind: str
+    status: str
+    account_id: int | None = None
+    member_id: int | None = None
+    priority: int
+    hide_amount: bool
+    achieved_at: str | None = None
+    celebrated: bool
+    sort_order: int
+    note: str
+    ratio: float
+    milestones: list[int]
+    deleted_at: str | None = None
+
+
+class GoalDetailOut(GoalOut):
+    contributions: list[ContributionOut] = Field(default_factory=list)
+
+
+class GoalListOut(BaseModel):
+    items: list[GoalOut]
+    count: int
+    active_target_minor: int
+    saved_minor: int
+
+
+class GoalContributionsOut(BaseModel):
+    items: list[ContributionOut]
+    count: int
+    saved_minor: int
+
+
+# -----------------------------------------------------------------------------
 # 元数据
 # -----------------------------------------------------------------------------
 class CurrencyOut(BaseModel):
