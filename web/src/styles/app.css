@@ -156,3 +156,37 @@
     @apply bg-surface text-label shadow-ab-1;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   打印（P5：台账与报表需要可打印）
+   ---------------------------------------------------------------------------
+   隐藏侧边栏、顶栏与所有标了 data-print-hide 的交互控件。
+   标了 data-print-root 的容器会去掉外边距，让表格铺满纸张宽度 ——
+   台账表格列多，留白会挤掉"余额"那一列。
+   --------------------------------------------------------------------------- */
+@media print {
+  aside,
+  header,
+  [data-print-hide] {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  [data-print-root] {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+  }
+  /* 表格跨页时不要从中间切开一行 */
+  tr,
+  table {
+    break-inside: avoid;
+  }
+  thead {
+    display: table-header-group;
+  }
+  @page {
+    margin: 12mm;
+  }
+}

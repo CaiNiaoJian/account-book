@@ -26,7 +26,9 @@ import { CardsPage } from '@/pages/Cards'
 import { KlinePage } from '@/pages/Kline'
 import { MetricsPage } from '@/pages/Metrics'
 import { GoalsPage } from '@/pages/Goals'
+import { LedgerPage } from '@/pages/Ledger'
 import { PiggyPage } from '@/pages/Piggy'
+import { ReportsPage } from '@/pages/Reports'
 import { BudgetsPage, DebtsPage, RecurringPage } from '@/pages/Planning'
 import { TrashPage } from '@/pages/Trash'
 import { CategoriesPage } from '@/pages/Categories'
@@ -52,6 +54,8 @@ const IMPLEMENTED_ROUTES: Record<string, ReactNode> = {
   '/budgets': <BudgetsPage />,
   '/piggy': <PiggyPage />,
   '/goals': <GoalsPage />,
+  '/ledger': <LedgerPage />,
+  '/reports': <ReportsPage />,
   '/recurring': <RecurringPage />,
   '/debts': <DebtsPage />,
   '/trash': <TrashPage />,

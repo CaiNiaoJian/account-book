@@ -1226,6 +1226,39 @@ export const api = {
   deleteGoalContribution: (id: number) =>
     request<void>(`/api/goals/contributions/${id}`, { method: 'DELETE' }),
 
+// ---- P5：台账 --------------------------------------------------------------
+  ledger: (accountId: number, params: { start: string; end: string }) =>
+    request<LedgerDocument>(`/api/ledger/${accountId}${query(params)}`),
+  trialBalance: () => request<TrialBalance>('/api/ledger/trial-balance'),
+  reconcile: (
+    accountId: number,
+    payload: { actual_balance_minor: number; as_of?: string; note?: string; create_adjustment?: boolean },
+  ) =>
+    request<ReconcileResult>(`/api/ledger/${accountId}/reconcile`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  // ---- P5：报表 --------------------------------------------------------------
+  buildReport: (params: { kind: ReportKind; start?: string; end?: string; include?: string }) =>
+    request<ReportDocument>(`/api/reports${query(params)}`),
+  reportSectionKeys: () => request<{ items: string[] }>('/api/reports/section-keys'),
+  /**
+   * 导出地址。
+   *
+   * 返回**字符串**而不是去 fetch：导出交给浏览器的下载机制，
+   * 这样几 MB 的 PDF 不会先在 JS 里被完整读进内存一次。
+   * 用 `<a download>` 触发，会话 Cookie 会随同源请求带上。
+   */
+  reportExportUrl: (params: {
+    kind: ReportKind
+    start?: string
+    end?: string
+    include?: string
+    format: 'markdown' | 'html' | 'pdf'
+    inline?: boolean
+  }) => `/api/reports/export${query(params)}`,
+
   /** 指标参数。口径说明页直接渲染它，参数一改说明页自动跟着变 */
   klineParams: () => request<KlineParams>('/api/kline/params'),
 
@@ -1374,6 +1407,152 @@ export interface ParsedDraft {
   matched: Record<string, string>
   unmatched: string[]
   raw: string
+}
+
+// ---- P5：台账与报表 ----------------------------------------------------------
+export interface LedgerEntry {
+  transaction_id: number
+  occurred_at: string
+  tz_offset_minutes: number
+  type: string
+  direction: 'in' | 'out'
+  amount_minor: number
+  /** 带符号金额：正=流入，负=流出 */
+  signed_minor: number
+  running_balance_minor: number
+  payee: string
+  note: string
+  status: string
+  source: string
+  category_id: number | null
+  category_name: string
+  category_kind: string
+  to_account_id: number | null
+  /** 转账时是对方账户名 */
+  counterparty: string
+  /** 'self' = 本账户是转出方；'incoming' = 本账户收到了这笔转账 */
+  leg: 'self' | 'incoming'
+  project_id: number | null
+  member_id: number | null
+  has_splits: boolean
+}
+
+export interface LedgerCheck {
+  internal_ok: boolean
+  aggregate_ok: boolean
+  covers_today: boolean
+  opening_balance_minor: number
+  closing_balance_minor: number
+  recomputed_closing_minor: number
+  /** 截至区间末的余额（台账期末应当等于它） */
+  aggregate_balance_minor: number
+  /** 全时段余额。与上面不同说明存在未来日期的流水 */
+  all_time_balance_minor: number
+  difference_minor: number
+  excluded_void_count: number
+  future_dated_count: number
+  future_dated_net_minor: number
+  balanced: boolean
+}
+
+export interface LedgerDocument {
+  account_id: number
+  account_name: string
+  currency: string
+  start: string
+  end: string
+  opening_balance_minor: number
+  closing_balance_minor: number
+  entries: LedgerEntry[]
+  count: number
+  inflow_minor: number
+  outflow_minor: number
+  check: LedgerCheck
+}
+
+export interface TrialBalance {
+  account_count: number
+  balance_change_minor: number
+  income_minor: number
+  expense_minor: number
+  adjust_net_minor: number
+  expected_change_minor: number
+  transfer_neutral_ok: boolean
+  broken_transfer_ids: number[]
+  balanced: boolean
+}
+
+export interface ReconcileResult {
+  account_id: number
+  account_name: string
+  as_of: string
+  computed_balance_minor: number
+  actual_balance_minor: number
+  difference_minor: number
+  created_transaction_id: number | null
+  new_balance_minor: number
+}
+
+export type ReportKind = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+
+/** 报告里的一个块。**这是唯一的扩展点** —— 新增展示只需加一个块类型。 */
+export interface ReportBlock {
+  type: 'text' | 'metrics' | 'table' | 'chart' | 'note' | 'unavailable'
+  text?: string
+  title?: string
+  items?: ReportMetric[]
+  columns?: { key: string; label: string; align?: string; format?: string }[]
+  rows?: Record<string, unknown>[]
+  footer?: Record<string, unknown> | null
+  empty?: string
+  chart?: 'bar' | 'line' | 'pie'
+  /** 中性数据集 —— **不是**任何图表库的配置，由渲染器决定怎么画 */
+  dataset?: { points?: { date?: string; name?: string; value_minor?: number; value?: number }[] }
+  unit?: 'money' | 'percent' | 'count'
+}
+
+export interface ReportMetric {
+  key: string
+  label: string
+  kind: 'money' | 'percent' | 'count'
+  value_minor?: number
+  value?: number
+  delta_ratio: number | null
+  delta_label: string
+  tone: string
+  hint?: string
+}
+
+export interface ReportSection {
+  key: string
+  title: string
+  blocks: ReportBlock[]
+  insights?: ReportInsight[]
+}
+
+export interface ReportInsight {
+  key: string
+  level: 'good' | 'info' | 'warn' | 'critical'
+  title: string
+  detail: string
+  evidence: string[]
+  suggestion: string
+  confidence: number
+}
+
+export interface ReportDocument {
+  schema: string
+  kind: ReportKind
+  title: string
+  subtitle: string
+  period: { start: string; end: string; label: string; days: number }
+  generated_at: string
+  currency: string
+  cover: { headline: string; highlights: string[] }
+  kpis: ReportMetric[]
+  sections: ReportSection[]
+  insights: ReportInsight[]
+  notes: string[]
 }
 
 // ---- P4：存钱罐与储蓄目标 ----------------------------------------------------
