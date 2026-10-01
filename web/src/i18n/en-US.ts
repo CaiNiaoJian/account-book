@@ -96,6 +96,7 @@ export const enUS = {
   },
 
   dashboard: {
+    dragHint: 'Drag any block to rearrange',
     greetingMorning: 'Good morning',
     greetingAfternoon: 'Good afternoon',
     greetingEvening: 'Good evening',

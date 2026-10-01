@@ -102,6 +102,7 @@ export const zhCN = {
   },
 
   dashboard: {
+    dragHint: '拖动任意一块可以换位置',
     greetingMorning: '早上好',
     greetingAfternoon: '下午好',
     greetingEvening: '晚上好',

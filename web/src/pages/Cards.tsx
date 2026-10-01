@@ -398,6 +398,18 @@ function CardFace({
   const { t } = useI18n()
   const { preferences } = usePreferences()
   const ink = inkClass((artwork?.spec.ink ?? 'light') as AvailableInk)
+  // 3D 倾斜：极轻的透视，让卡"有厚度"。减少动态效果时完全不做。
+  const [tilt, setTilt] = useState({ x: 0, y: 0 })
+  const tiltEnabled = !preferences.reduce_motion
+
+  const handleTilt = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!tiltEnabled) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    // 归一化到 -0.5..0.5，再乘最大倾角
+    const px = (event.clientX - rect.left) / rect.width - 0.5
+    const py = (event.clientY - rect.top) / rect.height - 0.5
+    setTilt({ x: -py * 6, y: px * 6 })
+  }
   const limit = card.credit_limit_minor
   const usedRatio = limit > 0 ? Math.min(1, Math.max(0, card.credit_used_minor / limit)) : 0
 
@@ -419,7 +431,15 @@ function CardFace({
     >
       <div
         className="relative flex h-44 flex-col justify-between overflow-hidden rounded-ab-lg p-4 shadow-ab-2 transition-shadow hover:shadow-ab-3"
-        style={cardStyle(artwork, card.brand_color)}
+        onMouseMove={handleTilt}
+        // 离开必须归零：不归零卡片会停在歪掉的角度，看起来像渲染坏了
+        onMouseLeave={() => setTilt({ x: 0, y: 0 })}
+        style={{
+          ...cardStyle(artwork, card.brand_color),
+          transform: `perspective(900px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`,
+          transformStyle: 'preserve-3d',
+          transition: tiltEnabled ? 'transform 120ms cubic-bezier(0.32, 0.72, 0, 1)' : 'none',
+        }}
       >
         {/* 光泽扫过：一条极淡的斜向高光，让卡面看起来有材质而不是一块纯色 */}
         {artwork && artwork.spec.texture !== 'none' ? (

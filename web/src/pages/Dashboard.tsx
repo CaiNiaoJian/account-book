@@ -125,7 +125,7 @@ export function DashboardPage() {
    * 只允许"重新排序"，不允许删除或新增分区 —— 一个能被拖空的仪表盘
    * 会让用户以为自己把功能弄丢了。
    */
-  const DEFAULT_LAYOUT = ['charts', 'lists', 'status']
+  const DEFAULT_LAYOUT = ['trend', 'categories', 'recent', 'accounts', 'status']
   const [layout, setLayout] = useState<string[]>(DEFAULT_LAYOUT)
 
   useEffect(() => {
@@ -257,8 +257,8 @@ export function DashboardPage() {
         </Card>
       ) : null}
 
-      <Reorder.Group axis="y" values={layout} onReorder={persistLayout} className="space-y-4">
-      <Reorder.Item value="charts" className="grid gap-4 xl:grid-cols-3">
+      <Reorder.Group axis="y" values={layout} onReorder={persistLayout} className="grid gap-4 xl:grid-cols-3">
+      <Reorder.Item value="trend" className="cursor-grab active:cursor-grabbing xl:col-span-2">
         {/* 近 30 天趋势 */}
         <Card className="xl:col-span-2" title={t('dashboard.trendTitle')}>
           <div className="flex items-center gap-3 text-ab-caption text-label-3">
@@ -304,7 +304,10 @@ export function DashboardPage() {
           </div>
         </Card>
 
-        {/* 分类占比 */}
+        </Reorder.Item>
+
+          <Reorder.Item value="categories" className="cursor-grab active:cursor-grabbing">
+          {/* 分类占比 */}
         <Card title={t('dashboard.topCategories')}>
           {data.month.top_categories.length === 0 ? (
             <p className="py-6 text-center text-ab-footnote text-label-3">{t('dashboard.noCategoryData')}</p>
@@ -346,7 +349,7 @@ export function DashboardPage() {
         </Card>
       </Reorder.Item>
 
-      <Reorder.Item value="lists" className="grid gap-4 xl:grid-cols-3">
+      <Reorder.Item value="recent" className="cursor-grab active:cursor-grabbing xl:col-span-2">
         {/* 最近流水 */}
         <Card
           className="xl:col-span-2"
@@ -401,7 +404,10 @@ export function DashboardPage() {
           )}
         </Card>
 
-        {/* 账户快照 */}
+        </Reorder.Item>
+
+          <Reorder.Item value="accounts" className="cursor-grab active:cursor-grabbing">
+          {/* 账户快照 */}
         <Card
           title={t('dashboard.accountsTitle')}
           action={
@@ -442,7 +448,7 @@ export function DashboardPage() {
         </Card>
       </Reorder.Item>
 
-      <Reorder.Item value="status">
+      <Reorder.Item value="status" className="cursor-grab active:cursor-grabbing xl:col-span-3">
         <RunStatusCard onReload={() => void Promise.all([load(), refreshLedger()])} />
       </Reorder.Item>
       </Reorder.Group>
