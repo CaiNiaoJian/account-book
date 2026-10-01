@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from sqlalchemy import func, select
@@ -32,11 +33,13 @@ from sqlalchemy.orm import Session
 
 from ..core.domain import AccountType, DebtKind, DebtStatus
 from ..core.errors import ConflictError, NotFoundError, ValidationError
+from ..core.periods import add_months
 from ..db.models import Account, Debt, DebtPayment
 from . import accounts as accounts_service
 from . import audit
 
 __all__ = [
+    "REPAYMENT_METHODS",
     "add_payment",
     "create_debt",
     "delete_debt",
@@ -44,6 +47,7 @@ __all__ = [
     "get_debt",
     "list_debts",
     "overview",
+    "repayment_plan",
     "settle_debt",
     "update_debt",
 ]
@@ -62,6 +66,8 @@ _MUTABLE = frozenset(
         "start_date",
         "due_date",
         "annual_rate_bps",
+        "repayment_method",
+        "installments",
         "note",
     }
 )
@@ -403,3 +409,141 @@ def settle_debt(session: Session, debt_id: int, *, status: str = "settled", on: 
         changes={"status": {"to": status}},
     )
     return debt
+
+
+#: 还款方式
+#: * ``equal_installment`` 等额本息：每期还款额相同
+#: * ``equal_principal`` 等额本金：每期本金相同、利息递减
+#: * ``interest_first`` 先息后本：前期只还利息，最后一期还本金
+#: * ``lump_sum`` 到期一次性还清（默认）
+REPAYMENT_METHODS = ("equal_installment", "equal_principal", "interest_first", "lump_sum")
+
+
+def repayment_plan(session: Session, debt_id: int, *, on: date | None = None) -> dict[str, Any]:
+    """算出还款计划表，并把实际还款记录对上去。
+
+    **不落库**：计划完全由（本金、年化利率、期数、方式、起始日）推出。
+    存一份就要在每次修改债务时同步，而漏同步的后果是用户照着错误的计划还钱。
+
+    本金分摊的取整规则：**最后一期吸收全部误差**，保证各期本金之和
+    **严格等于原始本金**。逐期独立四舍五入会让总额差几毛，
+    而"还完最后一期还剩 3 分钱"是无法接受的。
+    """
+    debt = get_debt(session, debt_id)
+    today = on or date.today()
+    method = debt.repayment_method or "lump_sum"
+    if method not in REPAYMENT_METHODS:
+        method = "lump_sum"
+    installments = max(1, debt.installments or 1)
+    principal = debt.principal_minor
+
+    # 月利率。基点 -> 小数 -> 按月。用 Decimal 全程参与，
+    # 避免二进制浮点在分摊里累积误差
+    monthly_rate = Decimal(debt.annual_rate_bps or 0) / Decimal(10_000) / Decimal(12)
+    months = max(1, installments)
+
+    rows: list[dict[str, Any]] = []
+    balance = principal
+
+    if principal <= 0:
+        # 零本金：给空计划而不是编一堆 0 —— 界面据此显示"无需还款"
+        return {
+            "debt_id": debt.id,
+            "method": method,
+            "installments": 0,
+            "principal_minor": 0,
+            "total_interest_minor": 0,
+            "total_payable_minor": 0,
+            "rows": [],
+            "paid_principal_minor": 0,
+            "remaining_minor": 0,
+            "has_plan": False,
+        }
+
+    # 等额本息的每期还款额。利率为 0 时公式退化，必须单独处理
+    if method == "equal_installment" and monthly_rate > 0:
+        factor = (Decimal(1) + monthly_rate) ** months
+        annuity = principal * monthly_rate * factor / (factor - 1)
+    elif method == "equal_installment":
+        annuity = Decimal(principal) / months
+    else:
+        annuity = Decimal(0)
+
+    for index in range(months):
+        period_no = index + 1
+        period_date = add_months(debt.start_date, index)
+        is_last = period_no == months
+
+        if method == "lump_sum":
+            # 一次性还清：只有一期
+            period_principal = principal
+            period_interest = _round_minor(Decimal(principal) * monthly_rate * months)
+        elif method == "interest_first":
+            period_principal = principal if is_last else 0
+            period_interest = _round_minor(Decimal(balance) * monthly_rate)
+        elif method == "equal_principal":
+            per = principal // months
+            period_principal = (principal - per * (months - 1)) if is_last else per
+            period_interest = _round_minor(Decimal(balance) * monthly_rate)
+        else:  # equal_installment
+            period_interest = _round_minor(Decimal(balance) * monthly_rate)
+            planned = _round_minor(annuity) - period_interest
+            # 最后一期吸收取整误差，保证本金之和恰好等于原始本金
+            period_principal = (balance) if is_last else max(0, planned)
+            if not is_last and period_principal > balance:
+                period_principal = balance
+
+        period_principal = max(0, min(period_principal, balance))
+        balance -= period_principal
+        rows.append(
+            {
+                "period": period_no,
+                "date": period_date.isoformat(),
+                "principal_minor": period_principal,
+                "interest_minor": period_interest,
+                "payment_minor": period_principal + period_interest,
+                "balance_minor": balance,
+                "due": period_date <= today,
+            }
+        )
+        if method == "lump_sum":
+            break
+
+    # 把实际还款对到期次上：按累计已还本金推进。
+    # 不做"第几期必须还多少"的强匹配 —— 用户提前还款、少还一点都是常事，
+    # 强行匹配会显示成"逾期"，而实际上他只是在按自己的节奏还
+    totals = _totals(session, debt.id)
+    cumulative_paid = totals["paid_principal_minor"]
+    covered = 0
+    running = 0
+    for row in rows:
+        running += row["principal_minor"]
+        row["settled"] = cumulative_paid >= running
+        row["overdue"] = bool(row["due"] and not row["settled"])
+        if row["settled"]:
+            covered = row["period"]
+
+    total_interest = sum(row["interest_minor"] for row in rows)
+    return {
+        "debt_id": debt.id,
+        "method": method,
+        "installments": len(rows),
+        "principal_minor": principal,
+        "total_interest_minor": total_interest,
+        "total_payable_minor": principal + total_interest,
+        "rows": rows,
+        "paid_principal_minor": cumulative_paid,
+        "remaining_minor": principal - cumulative_paid,
+        "settled_periods": covered,
+        "overdue_rows": sum(1 for row in rows if row["overdue"]),
+        "has_plan": len(rows) > 0,
+        # 计划是**估算**：真实计息方式（提前还款、罚息、浮动利率）不在范围内
+        "is_estimate": True,
+    }
+
+
+def _round_minor(value: Decimal) -> int:
+    """四舍五入到整数最小单位。**只用于利息** ——
+    本金分摊一律走"最后一期吸收误差"，不能逐期独立取整。
+    """
+    return int(value.quantize(Decimal(1), rounding=ROUND_HALF_UP))

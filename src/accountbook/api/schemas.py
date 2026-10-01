@@ -627,6 +627,11 @@ class DebtCreate(RequestModel):
     start_date: date
     due_date: date | None = None
     annual_rate_bps: int = Field(default=0, ge=0, le=100_000)
+    #: 还款方式：等额本息 / 等额本金 / 先息后本 / 到期一次性
+    repayment_method: Literal["equal_installment", "equal_principal", "interest_first", "lump_sum"] = (
+        "lump_sum"
+    )
+    installments: int = Field(default=1, ge=1, le=600)
     note: str = ""
     #: 是否同时建一个应收/应付账户，让这笔钱进入净值
     create_mirror_account: bool = False
@@ -643,6 +648,10 @@ class DebtUpdate(RequestModel):
     start_date: date | None = None
     due_date: date | None = None
     annual_rate_bps: int | None = Field(default=None, ge=0, le=100_000)
+    repayment_method: Literal["equal_installment", "equal_principal", "interest_first", "lump_sum"] | None = (
+        None
+    )
+    installments: int | None = Field(default=None, ge=1, le=600)
     note: str | None = None
 
 
@@ -660,6 +669,8 @@ class DebtOut(BaseModel):
     start_date: date
     due_date: date | None = None
     annual_rate_bps: int
+    repayment_method: str
+    installments: int
     status: str
     settled_at: date | None = None
     note: str

@@ -712,6 +712,10 @@ class Debt(Base, TimestampMixin, SoftDeleteMixin):
     )
     status: Mapped[str] = mapped_column(String(12), nullable=False, default="active")
     settled_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: 还款方式与期数。**只存这两个参数，不存分摊表** ——
+    #: 分摊表完全由它们加本金与利率推出，存一份就要在每次改债务时同步
+    repayment_method: Mapped[str] = mapped_column(String(20), nullable=False, default="lump_sum")
+    installments: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 

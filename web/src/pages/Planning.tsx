@@ -25,6 +25,8 @@ import {
   type DebtOverview,
   type DebtStatus,
   type PostDueReport,
+  type RepaymentMethod,
+  type RepaymentPlan,
   type RecurringRule,
   type UpcomingRule,
 } from '@/lib/api'
@@ -1129,11 +1131,15 @@ export function DebtsPage() {
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [paying, setPaying] = useState<DebtStatus | null>(null)
+  const [planFor, setPlanFor] = useState<DebtStatus | null>(null)
+  const [plan, setPlan] = useState<RepaymentPlan | null>(null)
   const [busy, setBusy] = useState(false)
 
   const [form, setForm] = useState({
     name: '',
     kind: 'lend' as 'lend' | 'borrow',
+    repayment_method: 'lump_sum' as RepaymentMethod,
+    installments: 12,
     counterparty: '',
     principal_minor: 0,
     start_date: localDayKey(),
@@ -1172,6 +1178,8 @@ export function DebtsPage() {
         start_date: form.start_date,
         due_date: form.due_date,
         annual_rate_bps: form.annual_rate_bps,
+        repayment_method: form.repayment_method,
+        installments: form.repayment_method === 'lump_sum' ? 1 : form.installments,
         create_mirror_account: form.create_mirror_account,
         note: form.note,
       })
@@ -1342,6 +1350,17 @@ export function DebtsPage() {
                     </button>
                     <button
                       type="button"
+                      className="ab-chip shrink-0"
+                      onClick={() => {
+                        setPlan(null)
+                        setPlanFor(item)
+                        void api.debtPlan(item.id).then(setPlan).catch(() => setPlan(null))
+                      }}
+                    >
+                      {t('debts.viewPlan')}
+                    </button>
+                    <button
+                      type="button"
                       className="ab-icon-btn shrink-0"
                       aria-label={t('debts.settle')}
                       onClick={() => {
@@ -1469,6 +1488,48 @@ export function DebtsPage() {
             </div>
             <p className="mt-1 text-ab-caption1 text-label-3">{t('debts.rateHint')}</p>
           </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="ab-field-label" htmlFor="debt-method">
+                {t('debts.repaymentMethod')}
+              </label>
+              <select
+                id="debt-method"
+                className="ab-select"
+                value={form.repayment_method}
+                onChange={(event) =>
+                  setForm({ ...form, repayment_method: event.target.value as RepaymentMethod })
+                }
+              >
+                {(
+                  ['lump_sum', 'equal_installment', 'equal_principal', 'interest_first'] as const
+                ).map((item) => (
+                  <option key={item} value={item}>
+                    {t(`debts.method.${item}`)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {form.repayment_method !== 'lump_sum' ? (
+              <div>
+                <label className="ab-field-label" htmlFor="debt-installments">
+                  {t('debts.installments')}
+                </label>
+                <input
+                  id="debt-installments"
+                  type="number"
+                  min={1}
+                  max={600}
+                  className="ab-input ab-tnum"
+                  value={form.installments}
+                  onChange={(event) =>
+                    setForm({ ...form, installments: Math.max(1, Number(event.target.value)) })
+                  }
+                />
+              </div>
+            ) : null}
+          </div>
+          <p className="text-ab-caption1 text-label-3">{t('debts.methodHint')}</p>
           <label className="flex items-start gap-2 text-ab-footnote text-label-2">
             <input
               type="checkbox"
@@ -1482,6 +1543,100 @@ export function DebtsPage() {
             </span>
           </label>
         </div>
+      </Modal>
+
+      {/* 还款计划 */}
+      <Modal
+        open={planFor !== null}
+        title={t('debts.planTitle', { name: planFor?.name ?? '' })}
+        size="lg"
+        onClose={() => {
+          setPlanFor(null)
+          setPlan(null)
+        }}
+        footer={
+          <button
+            type="button"
+            className="ab-btn-secondary"
+            onClick={() => {
+              setPlanFor(null)
+              setPlan(null)
+            }}
+          >
+            {t('common.close')}
+          </button>
+        }
+      >
+        {!plan ? (
+          <Skeleton className="h-40 w-full" />
+        ) : !plan.has_plan ? (
+          <p className="py-6 text-center text-ab-footnote text-label-3">{t('debts.noPlan')}</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Stat label={t('debts.principal')} value={displayMinor(plan.principal_minor, 'CNY', preferences.privacy_mode)} />
+              <Stat
+                label={t('debts.totalInterest')}
+                value={displayMinor(plan.total_interest_minor, 'CNY', preferences.privacy_mode)}
+                tone="negative"
+              />
+              <Stat label={t('debts.totalPayable')} value={displayMinor(plan.total_payable_minor, 'CNY', preferences.privacy_mode)} />
+              <Stat
+                label={t('debts.remaining')}
+                value={displayMinor(plan.remaining_minor, 'CNY', preferences.privacy_mode)}
+                hint={t('debts.settledPeriods', { done: plan.settled_periods, total: plan.installments })}
+              />
+            </div>
+            {/* 计划是估算，必须写在显眼处而不是折叠起来 */}
+            <p className="rounded-ab-sm bg-warning/10 px-3 py-2 text-ab-caption1 text-label-2">
+              {t('debts.estimateNote')}
+            </p>
+            <div className="max-h-80 overflow-y-auto">
+              <table className="w-full text-ab-footnote">
+                <thead className="sticky top-0 bg-surface text-label-3">
+                  <tr className="border-b border-separator/50">
+                    <th className="px-2 py-2 text-left font-medium">{t('debts.colPeriod')}</th>
+                    <th className="px-2 py-2 text-left font-medium">{t('debts.colDate')}</th>
+                    <th className="px-2 py-2 text-right font-medium">{t('debts.principal')}</th>
+                    <th className="px-2 py-2 text-right font-medium">{t('debts.interestPart')}</th>
+                    <th className="px-2 py-2 text-right font-medium">{t('debts.colPayment')}</th>
+                    <th className="px-2 py-2 text-right font-medium">{t('debts.colBalance')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {plan.rows.map((row) => (
+                    <tr
+                      key={row.period}
+                      className={`border-b border-separator/30 last:border-0 ${
+                        row.settled ? 'text-label-3' : row.overdue ? 'bg-negative/5' : ''
+                      }`}
+                    >
+                      <td className="ab-tnum px-2 py-1.5">
+                        <span className="flex items-center gap-1.5">
+                          {row.settled ? <Icon name="check" size={12} className="text-positive" /> : null}
+                          {row.period}
+                        </span>
+                      </td>
+                      <td className="ab-tnum px-2 py-1.5">{formatDayLabel(row.date)}</td>
+                      <td className="ab-tnum px-2 py-1.5 text-right">
+                        {displayMinor(row.principal_minor, 'CNY', preferences.privacy_mode)}
+                      </td>
+                      <td className="ab-tnum px-2 py-1.5 text-right">
+                        {displayMinor(row.interest_minor, 'CNY', preferences.privacy_mode)}
+                      </td>
+                      <td className="ab-tnum px-2 py-1.5 text-right font-medium">
+                        {displayMinor(row.payment_minor, 'CNY', preferences.privacy_mode)}
+                      </td>
+                      <td className="ab-tnum px-2 py-1.5 text-right text-label-3">
+                        {displayMinor(row.balance_minor, 'CNY', preferences.privacy_mode)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* 登记还款 */}

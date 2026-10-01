@@ -226,6 +226,20 @@ def delete_payment(payment_id: int, session: Session = SessionDep) -> None:
     debts_service.delete_payment(session, payment_id)
 
 
+@router.get("/api/debts/{debt_id}/plan", summary="还款计划（分摊表）")
+def repayment_plan(
+    debt_id: int,
+    on: date | None = Query(default=None),
+    session: Session = SessionDep,
+) -> dict[str, Any]:
+    """算出还款计划并把实际还款对到期次上。
+
+    ``is_estimate`` 恒为真：真实计息方式（提前还款、罚息、浮动利率）
+    不在本应用范围内，界面上必须写明"估算"。
+    """
+    return debts_service.repayment_plan(session, debt_id, on=on)
+
+
 @router.post("/api/debts/{debt_id}/settle", response_model=DebtOut, summary="结清 / 核销 / 重新激活")
 def settle_debt(debt_id: int, payload: SettleRequest, session: Session = SessionDep) -> DebtOut:
     debt = debts_service.settle_debt(session, debt_id, status=payload.status, on=payload.on)

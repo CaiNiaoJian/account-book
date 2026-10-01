@@ -997,6 +997,13 @@ export const api = {
     request<DebtPayment>(`/api/debts/${id}/payments`, { method: 'POST', body: JSON.stringify(payload) }),
   deleteDebtPayment: (paymentId: number) =>
     request<void>(`/api/debts/payments/${paymentId}`, { method: 'DELETE' }),
+  /**
+   * 还款计划（分摊表）。
+   *
+   * `is_estimate` 恒为真：真实计息方式（提前还款、罚息、浮动利率）
+   * 不在本应用范围内，界面必须写明"估算"。
+   */
+  debtPlan: (id: number) => request<RepaymentPlan>(`/api/debts/${id}/plan`),
   settleDebt: (id: number, status: string) =>
     request<Debt>(`/api/debts/${id}/settle`, { method: 'POST', body: JSON.stringify({ status }) }),
 
@@ -1042,6 +1049,41 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+}
+
+export type RepaymentMethod =
+  | 'equal_installment'
+  | 'equal_principal'
+  | 'interest_first'
+  | 'lump_sum'
+
+export interface RepaymentPlanRow {
+  period: number
+  date: string
+  principal_minor: number
+  interest_minor: number
+  payment_minor: number
+  balance_minor: number
+  due: boolean
+  settled: boolean
+  overdue: boolean
+}
+
+export interface RepaymentPlan {
+  debt_id: number
+  method: RepaymentMethod
+  installments: number
+  principal_minor: number
+  total_interest_minor: number
+  total_payable_minor: number
+  rows: RepaymentPlanRow[]
+  paid_principal_minor: number
+  remaining_minor: number
+  settled_periods: number
+  overdue_rows: number
+  has_plan: boolean
+  /** 恒为真：分摊表是估算 */
+  is_estimate: boolean
 }
 
 export interface CategoryTrendRow {

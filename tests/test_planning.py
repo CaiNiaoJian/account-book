@@ -690,3 +690,118 @@ class TestCategoryTrend:
             stats_service.category_trend(session, months=0)
         with pytest.raises(ValidationError):
             stats_service.category_trend(session, months=100)
+
+
+class TestRepaymentPlan:
+    def _debt(self, session: Session, **overrides):
+        payload = {
+            "name": "装修借款",
+            "kind": DebtKind.BORROW.value,
+            "counterparty": "表哥",
+            "principal_minor": 1_200_000,
+            "start_date": date(2026, 1, 1),
+            "due_date": date(2027, 1, 1),
+            "annual_rate_bps": 480,
+            "repayment_method": "equal_installment",
+            "installments": 12,
+        }
+        payload.update(overrides)
+        return debts_service.create_debt(session, **payload)
+
+    def test_principal_sums_exactly(self, session: Session) -> None:
+        """**本金分摊之和必须严格等于原始本金。**
+
+        逐期独立四舍五入会让总额差几毛钱，而"还完最后一期还剩 3 分钱"
+        是用户绝对无法接受的。做法是最后一期吸收全部误差。
+        """
+        for method in ("equal_installment", "equal_principal", "interest_first"):
+            debt = self._debt(session, repayment_method=method, name=f"测试-{method}")
+            plan = debts_service.repayment_plan(session, debt.id)
+            total = sum(row["principal_minor"] for row in plan["rows"])
+            assert total == debt.principal_minor, f"{method} 本金之和 {total} != {debt.principal_minor}"
+            assert plan["rows"][-1]["balance_minor"] == 0, f"{method} 最后一期余额应为 0"
+
+    def test_principal_sums_exactly_with_awkward_amounts(self, session: Session) -> None:
+        """刻意用除不尽的金额与期数：1000001 分 / 7 期。"""
+        for method in ("equal_installment", "equal_principal", "interest_first"):
+            debt = self._debt(
+                session,
+                principal_minor=1_000_001,
+                installments=7,
+                repayment_method=method,
+                name=f"除不尽-{method}",
+            )
+            plan = debts_service.repayment_plan(session, debt.id)
+            assert len(plan["rows"]) == 7
+            assert sum(row["principal_minor"] for row in plan["rows"]) == 1_000_001
+            assert plan["rows"][-1]["balance_minor"] == 0
+
+    def test_zero_rate_does_not_divide_by_zero(self, session: Session) -> None:
+        """利率为 0 时等额本息的公式会退化，必须单独走 P/n。"""
+        debt = self._debt(session, annual_rate_bps=0)
+        plan = debts_service.repayment_plan(session, debt.id)
+        assert plan["total_interest_minor"] == 0
+        assert sum(row["principal_minor"] for row in plan["rows"]) == debt.principal_minor
+
+    def test_equal_principal_decreases_interest(self, session: Session) -> None:
+        """等额本金：每期本金相同、利息逐期递减。"""
+        debt = self._debt(session, repayment_method="equal_principal")
+        plan = debts_service.repayment_plan(session, debt.id)
+        principals = {row["principal_minor"] for row in plan["rows"][:-1]}
+        assert len(principals) <= 2, f"各期本金应基本相同：{principals}"
+        interests = [row["interest_minor"] for row in plan["rows"]]
+        assert interests == sorted(interests, reverse=True), "利息应逐期递减"
+        assert interests[-1] < interests[0]
+
+    def test_interest_first_defers_principal(self, session: Session) -> None:
+        """先息后本：前面只还利息，最后一期才还本金。"""
+        debt = self._debt(session, repayment_method="interest_first", installments=6)
+        plan = debts_service.repayment_plan(session, debt.id)
+        for row in plan["rows"][:-1]:
+            assert row["principal_minor"] == 0
+            assert row["interest_minor"] > 0
+        assert plan["rows"][-1]["principal_minor"] == debt.principal_minor
+
+    def test_lump_sum_single_row(self, session: Session) -> None:
+        debt = self._debt(session, repayment_method="lump_sum", installments=12)
+        plan = debts_service.repayment_plan(session, debt.id)
+        assert len(plan["rows"]) == 1
+        assert plan["rows"][0]["principal_minor"] == debt.principal_minor
+
+    def test_payments_mark_periods_settled(self, session: Session) -> None:
+        """实际还款按**累计已还本金**对到期次上，而不是强匹配"每期必须还多少"。"""
+        debt = self._debt(session, repayment_method="equal_principal", installments=12)
+        per = debt.principal_minor // 12
+        for index in range(3):
+            debts_service.add_payment(
+                session,
+                debt.id,
+                amount_minor=per,
+                occurred_at=datetime.combine(date(2026, 1 + index, 1), datetime.min.time()),
+            )
+        plan = debts_service.repayment_plan(session, debt.id)
+        settled = [row["period"] for row in plan["rows"] if row["settled"]]
+        assert settled == [1, 2, 3], f"应结清前 3 期：{settled}"
+        assert plan["settled_periods"] == 3
+
+    def test_zero_principal_has_no_plan(self, session: Session) -> None:
+        """零本金给空计划，而不是编一堆 0 行。"""
+        debt = self._debt(session, principal_minor=0)
+        plan = debts_service.repayment_plan(session, debt.id)
+        assert plan["has_plan"] is False
+        assert plan["rows"] == []
+        assert plan["remaining_minor"] == 0
+
+    def test_plan_is_flagged_as_estimate(self, session: Session) -> None:
+        """计划是估算：真实计息方式不在范围内，界面必须写明。"""
+        debt = self._debt(session)
+        plan = debts_service.repayment_plan(session, debt.id)
+        assert plan["is_estimate"] is True
+        assert plan["total_payable_minor"] == plan["principal_minor"] + plan["total_interest_minor"]
+
+    def test_due_and_overdue_flags(self, session: Session) -> None:
+        debt = self._debt(session, start_date=TODAY - timedelta(days=400))
+        plan = debts_service.repayment_plan(session, debt.id, on=TODAY)
+        assert any(row["due"] for row in plan["rows"])
+        # 一期都没还，因此已到期的那些都是逾期
+        assert plan["overdue_rows"] >= 1
