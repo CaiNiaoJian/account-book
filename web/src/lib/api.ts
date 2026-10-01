@@ -384,7 +384,18 @@ export interface DashboardData {
     expense_change: number | null
     top_categories: CategoryBreakdownItem[]
   }
-  trend: { date: string; income_minor: number; expense_minor: number; transaction_count: number }[]
+  /** 近 N 天的逐日趋势。
+et_worth_minor 与 
+et_minor 口径不同：
+   *  前者来自日结缓存（含转账与起点余额），后者只是当日收入减支出 */
+  trend: {
+    date: string
+    income_minor: number
+    expense_minor: number
+    net_minor: number
+    net_worth_minor: number
+    transaction_count: number
+  }[]
   recent_transactions: Transaction[]
   accounts: AccountOverviewItem[]
 }

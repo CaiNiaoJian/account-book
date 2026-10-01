@@ -21,6 +21,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { CountUp } from '@/components/CountUp'
+import { Sparkline } from '@/components/Sparkline'
 import { Icon, type IconName } from '@/components/Icon'
 import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { staggerContainer, staggerItem } from '@/design/motion'
@@ -43,6 +44,9 @@ interface MetricProps {
   value: string
   /** 原始金额（最小单位）。提供后数字会滚动过渡，让「变了多少」可见 */
   minor?: number
+  /** KPI 卡内的迷你趋势线（微图表）。点数不宜超过 60，否则线会糊成一片 */
+  spark?: number[]
+  sparkTone?: 'accent' | 'positive' | 'negative' | 'warning' | 'purple' | 'teal'
   delta?: number | null
   hint?: string
 }
@@ -53,7 +57,7 @@ interface MetricProps {
  * 环比为 `null` 时显示 `—` 而不是 0% 或 +100%：
  * "上期是 0，这期是 500"在数学上没有变化率，编一个出来是骗人。
  */
-function MetricCard({ label, icon, tone, value, minor, delta, hint }: MetricProps) {
+function MetricCard({ label, icon, tone, value, minor, spark, sparkTone, delta, hint }: MetricProps) {
   return (
     <motion.div variants={staggerItem}>
       <Card dense className="h-full">
@@ -84,6 +88,19 @@ function MetricCard({ label, icon, tone, value, minor, delta, hint }: MetricProp
         <div className="ab-metric mt-2.5">
           {minor === undefined ? value : <CountUp value={minor} />}
         </div>
+        {/* KPI 微图表：让"最近在怎么变"与"现在是多少"出现在同一个视线里。
+            放在数字下方而不是右侧，是为了不挤压金额的显示宽度（大额会换行）。 */}
+        {spark && spark.length > 1 ? (
+          <Sparkline
+            points={spark}
+            tone={sparkTone ?? (tone === 'negative' ? 'negative' : tone === 'positive' ? 'positive' : 'accent')}
+            height={26}
+            filled
+            showLastPoint
+            className="mt-1.5 w-full"
+            title={hint ?? label}
+          />
+        ) : null}
         {hint ? <div className="mt-0.5 text-ab-caption1 text-label-3">{hint}</div> : null}
       </Card>
     </motion.div>
@@ -190,6 +207,8 @@ export function DashboardPage() {
           tone="accent"
           value={displayMinor(data.net_worth.net_worth_minor, 'CNY', preferences.privacy_mode)}
           minor={data.net_worth.net_worth_minor}
+          spark={data.trend.map((day) => day.net_worth_minor)}
+          sparkTone="accent"
           hint={t('dashboard.assetsHint', {
             assets: compactMinor(data.net_worth.assets_minor),
             liabilities: compactMinor(data.net_worth.liabilities_minor),
@@ -218,6 +237,7 @@ export function DashboardPage() {
           tone="purple"
           value={displayMinor(data.month.net_minor, 'CNY', preferences.privacy_mode)}
           minor={data.month.net_minor}
+          spark={data.trend.map((day) => day.net_minor)}
         />
       </motion.div>
 

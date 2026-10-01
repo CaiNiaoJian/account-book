@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from ..core.domain import TRANSFER_TYPES, TransactionStatus
 from ..db.models import Account, Category, Transaction, TransactionSplit
 from . import accounts as accounts_service
+from . import daily as daily_service
 from . import transactions as transactions_service
 
 __all__ = [
@@ -111,6 +112,12 @@ def dashboard(
 
     trend_start, trend_end = range_bounds(trend_days, end=today)
     trend = transactions_service.daily_totals(session, start=trend_start.date(), end=trend_end.date())
+    # 净值按日取自日结缓存（时序数据的唯一来源），而不是在首页另算一遍 ——
+    # 前端自己用"收入减支出"当净值会是另一个口径（净值还受转账与起点余额影响）
+    net_worth_by_day = {
+        date.fromisoformat(item["date"]): int(item["net_worth_minor"])
+        for item in daily_service.net_worth_series(session, start=trend_start.date(), end=trend_end.date())
+    }
 
     return {
         "reference_date": today.isoformat(),
@@ -136,6 +143,11 @@ def dashboard(
                 "date": item.day.isoformat(),
                 "income_minor": item.income_minor,
                 "expense_minor": item.expense_minor,
+                "net_minor": item.income_minor - item.expense_minor,
+                # 净值也放进趋势里：首页的 KPI 卡要用它画迷你趋势线。
+                # 让前端自己去拼（收-支）会是另一个口径 —— 净值受转账与
+                # 账户起点余额影响，不等于"收入减支出"。
+                "net_worth_minor": net_worth_by_day.get(item.day, 0),
                 "transaction_count": item.transaction_count,
             }
             for item in trend
