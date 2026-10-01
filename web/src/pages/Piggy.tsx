@@ -82,8 +82,12 @@ function Jar({
   const liquidY = INNER_BOTTOM - liquidHeight
 
   const palette = SKINS[skin] ?? SKINS.classic!
-  const bodyClass = achieved ? 'fill-positive/25' : palette.body
-  const liquidClass = achieved ? 'fill-positive' : palette.liquid
+  // 达成态**不能只把液体染绿**：100% 的液体会铺满整个罐身，
+  // 于是 `stroke-separator` 的轮廓被吞掉，罐子看起来就是一块实心圆角矩形。
+  // 因此达成时刻意把罐身压淡、把轮廓换成实色，罐子的形状才留得住。
+  const bodyClass = achieved ? 'fill-positive/12' : palette.body
+  const liquidClass = achieved ? 'fill-positive/70' : palette.liquid
+  const outlineClass = achieved ? 'stroke-positive' : 'stroke-separator'
 
   const outline =
     'M24 40 h72 a8 8 0 0 1 8 8 v70 a18 18 0 0 1 -18 18 h-52 a18 18 0 0 1 -18 -18 v-70 a8 8 0 0 1 8 -8 z'
@@ -123,18 +127,25 @@ function Jar({
       </g>
 
       {/* 罐口与轮廓。画在液体之后，液体才不会盖住边缘 */}
-      <path d="M30 40 h60" className="stroke-separator" strokeWidth="3" strokeLinecap="round" fill="none" />
-      <path d={outline} className="fill-none stroke-separator" strokeWidth="2" />
+      <path d="M30 40 h60" className={outlineClass} strokeWidth="3" strokeLinecap="round" fill="none" />
+      <path d={outline} className={`fill-none ${outlineClass}`} strokeWidth="2" />
       {achieved ? (
-        <motion.circle
-          cx="60"
-          cy="96"
-          r="14"
-          className="fill-positive/90"
+        // 勾画在**白底**上：绿底绿勾等于看不见（截图才发现）
+        <motion.g
           initial={{ scale: 0.6, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ type: 'spring', stiffness: 120, damping: 14 }}
-        />
+        >
+          <circle cx="60" cy="96" r="15" className="fill-surface" />
+          <circle cx="60" cy="96" r="15" className="fill-none stroke-positive" strokeWidth="2" />
+          <path
+            d="M53 96 l5 5 l9 -10"
+            className="fill-none stroke-positive"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </motion.g>
       ) : null}
     </svg>
   )

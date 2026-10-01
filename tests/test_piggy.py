@@ -600,3 +600,44 @@ class TestBankLifecycle:
         rule.category_ids = "{ 不是合法 JSON"
         session.flush()
         assert piggy_service.serialize_rule(rule)["category_ids"] == []
+
+
+class TestGoalStatusDerivation:
+    """目标的 status 必须按**当前进度**推导，而不是只看落库的那个值。
+
+    进度来自账户实时余额，而 status 只在写入目标时刷新 ——
+    账户余额在目标创建之后涨上去时，一个 120% 的目标会仍然显示"进行中"，
+    而且永远不会庆祝。这个 bug 是**看截图**发现的：
+    截图里"首付"的进度环写着 120%，却没有达成标记。
+    """
+
+    def test_goal_shows_achieved_when_account_balance_grows(self, session) -> None:
+        account = _account(session)
+        goal = piggy_service.add_goal(
+            session, name="首付", target_amount_minor=100_000, account_id=account.id
+        )
+        assert piggy_service.serialize_goal(session, goal)["status"] == "active"
+
+        _income(session, day=TODAY, amount=150_000)
+        payload = piggy_service.serialize_goal(session, goal)
+        assert payload["saved_minor"] == 150_000
+        assert payload["ratio"] == pytest.approx(1.5)
+        assert payload["status"] == "achieved", "进度超了就该显示已达成"
+
+    def test_derivation_does_not_persist(self, session) -> None:
+        """推导**不落库**：读操作不该写数据库。"""
+        account = _account(session)
+        goal = piggy_service.add_goal(
+            session, name="首付", target_amount_minor=100_000, account_id=account.id
+        )
+        _income(session, day=TODAY, amount=150_000)
+        piggy_service.serialize_goal(session, goal)
+        assert goal.status == "active", "落库的 status 不该被读操作改掉"
+        assert goal.achieved_at is None
+
+    def test_paused_goal_is_not_rewritten(self, session) -> None:
+        """暂停/放弃是用户的明确决定，不该被进度推导覆盖。"""
+        goal = piggy_service.add_goal(session, name="x", target_amount_minor=1_000)
+        piggy_service.update_goal(session, goal.id, status="abandoned")
+        piggy_service.contribute(session, goal.id, amount_minor=2_000)
+        assert piggy_service.serialize_goal(session, goal)["status"] == "abandoned"

@@ -1285,6 +1285,13 @@ def serialize_deposit(row: PiggyBankDeposit) -> dict[str, Any]:
 
 def serialize_goal(session: Session, goal: Goal, *, saved_minor: int | None = None) -> dict[str, Any]:
     saved = goal_saved(session, goal) if saved_minor is None else saved_minor
+    # 目标的进度来自**账户实时余额**，而 `status` 只在写入目标时刷新。
+    # 账户余额在目标创建之后涨上去时，status 会停在 active ——
+    # 于是一个 120% 的目标仍然显示"进行中"，而且**永远不会庆祝**。
+    # 因此展示时按当前进度推导一次；刻意不落库，避免"读操作写数据库"。
+    status = goal.status
+    if status == "active" and saved >= goal.target_amount_minor:
+        status = "achieved"
     return {
         "id": goal.id,
         "name": goal.name,
@@ -1293,7 +1300,7 @@ def serialize_goal(session: Session, goal: Goal, *, saved_minor: int | None = No
         "currency": goal.currency,
         "deadline": goal.deadline.isoformat() if goal.deadline else None,
         "kind": goal.kind,
-        "status": goal.status,
+        "status": status,
         "account_id": goal.account_id,
         "member_id": goal.member_id,
         "priority": goal.priority,
