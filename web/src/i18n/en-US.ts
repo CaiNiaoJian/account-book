@@ -53,7 +53,7 @@ export const enUS = {
 
   scope: {
     dashboard: 'Net worth, monthly cash flow, budget progress, tasks and reminders on one screen.',
-    transactions: 'List, calendar and timeline views with virtual scrolling, bulk edit and advanced filters.',
+    transactions: 'List, calendar and timeline views with advanced filters.',
     quickAdd: 'Global hotkey, tray popover, templates and natural-language parsing for near-instant entry.',
     accounts: 'Balances, billing cycles, reconciliation and balance trends across every account type.',
     cards: 'A customizable card wall for bank cards, WeChat Pay, Alipay and more, showing how assets are spread.',

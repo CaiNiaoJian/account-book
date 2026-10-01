@@ -21,8 +21,8 @@ import { Card, EmptyState, Kbd, Skeleton } from '@/components/ui'
 import { useI18n } from '@/i18n'
 import { api, type KlinePeriod, type KlineResponse } from '@/lib/api'
 import { displayMinor, formatDayLabel } from '@/lib/format'
-import { resolveToken } from '@/design/tokens'
-import { usePreferences } from '@/app/preferences'
+import { moneyColors, resolveToken } from '@/design/tokens'
+import { usePreferences, useTheme } from '@/app/preferences'
 
 import { useCallback, useEffect } from 'react'
 
@@ -36,6 +36,10 @@ type Overlay = 'ma' | 'macd' | 'rsi' | 'drawdown'
 export function KlinePage() {
   const { t } = useI18n()
   const { preferences } = usePreferences()
+  // 涨跌配色必须听设置的：用户选了「绿涨红跌」，K 线还画成红涨绿跌
+  // 是会让人看反方向的错。moneyColors 是这条偏好的唯一出口。
+  const { moneyColorScheme } = useTheme()
+  const trend = moneyColors(moneyColorScheme)
 
   const [period, setPeriod] = useState<KlinePeriod>('day')
   const [overlay, setOverlay] = useState<Overlay>('ma')
@@ -87,8 +91,8 @@ export function KlinePage() {
   // ---- 主图：蜡烛 + 均线 ---------------------------------------------------
   const candleOption = useMemo(() => {
     const dates = bars.map((bar) => bar.period_start)
-    const positive = resolveToken('positive')
-    const negative = resolveToken('negative')
+    const positive = trend.up
+    const negative = trend.down
     const maColors = [
       resolveToken('orange'),
       resolveToken('indigo'),
@@ -198,7 +202,7 @@ export function KlinePage() {
       ],
       grid: { left: 6, right: 14, top: 30, bottom: 40, containLabel: true },
     }
-  }, [bars, data, t])
+  }, [bars, data, t, trend])
 
   // ---- 成交量 --------------------------------------------------------------
   const volumeOption = useMemo(
@@ -211,7 +215,7 @@ export function KlinePage() {
             value: bar.volume_minor / 100,
             // 用涨跌染色，让"放量的那天是涨还是跌"一眼可读
             itemStyle: {
-              color: bar.close_minor >= bar.open_minor ? resolveToken('positive') : resolveToken('negative'),
+              color: bar.close_minor >= bar.open_minor ? trend.up : trend.down,
               opacity: 0.55,
             },
           })),
@@ -288,7 +292,7 @@ export function KlinePage() {
             data: bars.map((bar) => ({
               value: bar.macd,
               itemStyle: {
-                color: (bar.macd ?? 0) >= 0 ? resolveToken('positive') : resolveToken('negative'),
+                color: (bar.macd ?? 0) >= 0 ? trend.up : trend.down,
               },
             })),
           },
@@ -346,7 +350,7 @@ export function KlinePage() {
       grid: { left: 6, right: 14, top: 18, bottom: 4, containLabel: true },
       tooltip: { valueFormatter: (value: number) => `${value}%` },
     }
-  }, [bars, overlay, data, t])
+  }, [bars, overlay, data, t, trend])
 
   // ---- 区间对比 ------------------------------------------------------------
   /**
