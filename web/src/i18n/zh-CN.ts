@@ -1127,6 +1127,8 @@ export const zhCN = {
     employerShare: '单位缴纳占 {percent}%（这部分没进工资卡，但确实属于你）',
     byKind: '险种构成',
     compare: '单位 vs 个人',
+    byYear: '逐年累积',
+    yearLabel: '{year} 年',
     cumulative: '逐月累积',
     history: '工资历史与同比',
     yoy: '同比',

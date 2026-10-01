@@ -867,6 +867,14 @@ def insurance_overview(session: Session, *, start_period: str, end_period: str) 
         period_bucket["personal_minor"] += row.personal_minor
         period_bucket["employer_minor"] += row.employer_minor
 
+    # **按年聚合**：缴纳是长期积累，单月数字没什么意义，
+    # 而跨年的趋势只有按年才看得出来（比例每年会调）。
+    by_year: dict[str, dict[str, int]] = {}
+    for row in rows:
+        year_bucket = by_year.setdefault(row.period[:4], {"personal_minor": 0, "employer_minor": 0})
+        year_bucket["personal_minor"] += row.personal_minor
+        year_bucket["employer_minor"] += row.employer_minor
+
     personal = sum(bucket["personal_minor"] for bucket in by_kind.values())
     employer = sum(bucket["employer_minor"] for bucket in by_kind.values())
     profiles = list_profiles(session, include_disabled=True)
@@ -887,6 +895,7 @@ def insurance_overview(session: Session, *, start_period: str, end_period: str) 
             by_kind.values(), key=lambda item: -(item["personal_minor"] + item["employer_minor"])
         ),
         "by_period": [{"period": key, **value} for key, value in sorted(by_period.items())],
+        "by_year": [{"year": key, **value} for key, value in sorted(by_year.items())],
         "account_balances": balances,
         "account_total_minor": sum(balances.values()),
         "profile_count": len(profiles),

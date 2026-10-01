@@ -224,6 +224,8 @@ function monthlyPayrollOption(
 function cumulativeOption(
   rows: { period: string; personal_minor: number; employer_minor: number }[],
   formatValue: (value: unknown) => string,
+  labels: { personal: string; employer: string },
+  stack: string,
 ) {
   const axis = resolveToken('text-3')
   const split = resolveToken('separator')
@@ -245,17 +247,17 @@ function cumulativeOption(
     },
     series: [
       {
-        name: '个人',
+        name: labels.personal,
         type: 'bar',
-        stack: 'total',
+        stack,
         barMaxWidth: 26,
         itemStyle: { color: resolveToken('accent') },
         data: rows.map((row) => row.personal_minor),
       },
       {
-        name: '单位',
+        name: labels.employer,
         type: 'bar',
-        stack: 'total',
+        stack,
         barMaxWidth: 26,
         itemStyle: { color: resolveToken('positive') },
         data: rows.map((row) => row.employer_minor),
@@ -652,11 +654,37 @@ export function PayrollPage() {
                     />
                   </div>
                 </div>
+                {/* **逐年累积**：与逐月图各说一件事 ——
+                    按月看节奏，按年看趋势。跨年的比例调整只有在按年图上才看得出来。 */}
+                {insurance.by_year.length > 0 ? (
+                  <div className="mt-3">
+                    <div className="ab-section-label !px-0">{t('payroll.byYear')}</div>
+                    <Chart
+                      option={cumulativeOption(
+                        insurance.by_year.map((row) => ({
+                          period: t('payroll.yearLabel', { year: row.year }),
+                          personal_minor: row.personal_minor,
+                          employer_minor: row.employer_minor,
+                        })),
+                        formatValue,
+                        { personal: t('payroll.personal'), employer: t('payroll.employerPaid') },
+                        'year',
+                      )}
+                      height={200}
+                    />
+                  </div>
+                ) : null}
+
                 {insurance.by_period.length > 1 ? (
                   <div className="mt-3">
                     <div className="ab-section-label !px-0">{t('payroll.cumulative')}</div>
                     <Chart
-                      option={cumulativeOption(insurance.by_period, formatValue)}
+                      option={cumulativeOption(
+                        insurance.by_period,
+                        formatValue,
+                        { personal: t('payroll.personal'), employer: t('payroll.employerPaid') },
+                        'period',
+                      )}
                       height={200}
                     />
                   </div>

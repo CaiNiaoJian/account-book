@@ -440,6 +440,29 @@ class TestOverview:
         kinds = [item["kind"] for item in body["by_kind"]]
         assert kinds[0] == "pension"  # 金额大的排前面
 
+    def test_by_year_aggregates_across_months(self, session) -> None:
+        """**按年聚合**：缴纳是长期积累，而跨年的比例调整只有在按年图上才看得出来。
+
+        与 `by_period` 各说一件事 —— 按月看节奏，按年看趋势。
+        """
+        profile = _profile(session)
+        insurance.upsert_item(session, kind="pension", personal_rate_bps=800)
+        for period in ("2025-11", "2025-12", "2026-01", "2026-02"):
+            insurance.record_contribution(session, profile.id, period)
+        body = insurance.insurance_overview(session, start_period="2025-01", end_period="2026-12")
+        years = {row["year"]: row for row in body["by_year"]}
+        assert sorted(years) == ["2025", "2026"]
+        # 养老个人 8% x 10000 = 800 元/月
+        assert years["2025"]["personal_minor"] == 160_000
+        assert years["2026"]["personal_minor"] == 160_000
+        # 四个月都在，但分成两年
+        assert len(body["by_period"]) == 4
+
+    def test_by_year_is_empty_without_records(self, session) -> None:
+        _profile(session)
+        body = insurance.insurance_overview(session, start_period="2026-01", end_period="2026-12")
+        assert body["by_year"] == []
+
     def test_range_filters_periods(self, session) -> None:
         profile = _profile(session)
         insurance.upsert_item(session, kind="pension", personal_rate_bps=800)

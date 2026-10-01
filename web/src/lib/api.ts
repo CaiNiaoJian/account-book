@@ -1876,6 +1876,8 @@ export interface InsuranceOverview {
   employer_share: number | null
   by_kind: { kind: string; name: string; personal_minor: number; employer_minor: number }[]
   by_period: { period: string; personal_minor: number; employer_minor: number }[]
+  /** 按年聚合：跨年的趋势只有按年才看得出来（比例每年会调） */
+  by_year: { year: string; personal_minor: number; employer_minor: number }[]
   account_balances: Record<string, number>
   account_total_minor: number
   profile_count: number

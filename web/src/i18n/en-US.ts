@@ -1153,6 +1153,8 @@ export const enUS = {
     employerShare: 'Employer pays {percent}% (this never touches your payslip, but it is yours)',
     byKind: 'By item',
     compare: 'Employer vs employee',
+    byYear: 'Yearly accumulation',
+    yearLabel: '{year}',
     cumulative: 'Monthly accumulation',
     history: 'History & year-over-year',
     yoy: 'YoY',
