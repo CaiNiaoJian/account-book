@@ -1399,3 +1399,127 @@ class InsuranceAnnualStatement(Base, TimestampMixin):
     interest_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     reconciled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+# -----------------------------------------------------------------------------
+# P6：定时任务与提醒
+# -----------------------------------------------------------------------------
+class ScheduledTask(Base, TimestampMixin):
+    """定时任务。
+
+    `rule` 用 JSON 描述"什么时候跑"，字段与 `services/scheduler.py` 的
+    解析器一一对应：`frequency`（daily/weekly/monthly/once）、
+    `day_of_month` / `day_kind` / `weekend_policy` / `holiday_policy`
+    （与发薪规则共用同一套工作日逻辑）、`at`（HH:MM）。
+
+    **不预先铺满执行记录**：`next_run_at` 是算出来的，
+    每次执行后由服务层推进。这样"改了规则"立刻生效，
+    而不用去清理已经排好的旧实例。
+    """
+
+    __tablename__ = "scheduled_tasks"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('payday', 'insurance', 'bill', 'repayment', 'recurring', "
+            "'budget_close', 'report', 'backup', 'custom')",
+            name="kind",
+        ),
+        CheckConstraint(
+            "catch_up_policy IN ('startup', 'immediate', 'record_only')",
+            name="catch_up",
+        ),
+        CheckConstraint("priority BETWEEN 0 AND 9", name="priority"),
+        UniqueConstraint("code", name="uq_scheduled_tasks_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: 稳定标识，供代码引用（例如 'payday:1'、'backup:daily'）
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="custom")
+    rule: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    #: 错过执行时间后的处理：
+    #: startup=启动时补办 / immediate=立即补 / record_only=仅记录不执行
+    catch_up_policy: Mapped[str] = mapped_column(String(12), nullable=False, default="startup")
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    #: 业务侧引用（例如发薪任务指向 pay_sources.id）
+    ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class TaskRun(Base, TimestampMixin):
+    """每次执行留痕。用于"任务历史与健康度"。"""
+
+    __tablename__ = "task_runs"
+    __table_args__ = (
+        CheckConstraint("status IN ('success', 'skipped', 'failed', 'caught_up')", name="status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("scheduled_tasks.id"), nullable=True, index=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    #: 计划执行时刻
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="success")
+    #: 结果摘要（例如"生成 1 条工资草稿"）
+    summary: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    error: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    #: 是否为"补办"（软件当时没运行）
+    caught_up: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PendingPrompt(Base, TimestampMixin):
+    """待办提示（PLAN 里的 `pending_prompts`）。
+
+    强弹与漏填拦截的落点。**必须带合规出口**：
+    `snooze_count` / `max_snooze` 限制"稍后提醒"的次数，
+    `status='skipped'` 要求先给出原因。只有"必须填"会让真的没工资的
+    月份变成死锁，而用户会开始随手填假数据 —— 那比不填更糟。
+    """
+
+    __tablename__ = "pending_prompts"
+    __table_args__ = (
+        CheckConstraint("blocking_level IN ('strong', 'normal')", name="blocking_level"),
+        CheckConstraint("status IN ('pending', 'snoozed', 'resolved', 'skipped')", name="status"),
+        CheckConstraint("snooze_count >= 0 AND max_snooze >= 0", name="snooze"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False, default="payroll")
+    title: Mapped[str] = mapped_column(String(80), nullable=False)
+    body: Mapped[str] = mapped_column(String(400), nullable=False, default="")
+    #: strong = 进入"必须处理"队列；normal = 只作为通知
+    blocking_level: Mapped[str] = mapped_column(String(8), nullable=False, default="strong")
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="pending")
+    #: 业务对象引用（例如 payroll_records.id）
+    target_kind: Mapped[str] = mapped_column(String(24), nullable=False, default="")
+    target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    snooze_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_snooze: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    next_remind_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    skip_reason: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #: 去重键：同一件事不该反复入队（例如发薪日重复触发）
+    dedupe_key: Mapped[str] = mapped_column(String(80), nullable=False, default="", index=True)
+
+
+class Notification(Base, TimestampMixin):
+    """通知中心。比提示轻：只读、不拦截。"""
+
+    __tablename__ = "notifications"
+    __table_args__ = (CheckConstraint("level IN ('info', 'success', 'warn', 'error')", name="level"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    level: Mapped[str] = mapped_column(String(8), nullable=False, default="info")
+    title: Mapped[str] = mapped_column(String(80), nullable=False)
+    body: Mapped[str] = mapped_column(String(400), nullable=False, default="")
+    #: 可选的跳转目标（前端路由）
+    action_path: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    action_label: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    dedupe_key: Mapped[str] = mapped_column(String(80), nullable=False, default="", index=True)
