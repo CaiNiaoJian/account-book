@@ -34,7 +34,7 @@ from ..core.errors import NotFoundError, ValidationError
 from ..core.money import DEFAULT_CURRENCY
 from ..db.base import local_now
 from ..db.models import Account, Category, Tag, Transaction, TransactionSplit
-from . import audit
+from . import audit, daily
 
 __all__ = [
     "TRANSACTION_MUTABLE_FIELDS",
@@ -265,6 +265,10 @@ def create_transaction(
         _replace_tags(session, transaction, tag_ids)
         session.flush()
 
+    # 让日结缓存失效。**放在这里而不是 API 层**：只要经过服务层写入就一定会标脏，
+    # 不会因为将来多了一条调用路径（导入、周期记账、插件）而漏掉。
+    daily.mark_dirty_from(session, transaction.occurred_at)
+
     audit.record(
         session,
         entity="transaction",
@@ -298,6 +302,9 @@ def update_transaction(
         raise ValidationError(f"不支持的流水字段：{sorted(unknown)}", fields=sorted(unknown))
 
     transaction = get_transaction(session, transaction_id)
+    # 记下改动前的业务日期：把一笔流水从 3 号改到 1 号，
+    # 1 号到 3 号之间的日结**全部**受影响，因此要取两者的较早值标脏
+    previous_day = transaction.occurred_at
     normalized = _normalize_fields(session, changes, current=transaction)
 
     before = audit.snapshot(transaction, normalized.keys())
@@ -312,6 +319,8 @@ def update_transaction(
     if tag_ids is not None:
         _replace_tags(session, transaction, tag_ids)
         session.flush()
+
+    daily.mark_dirty_from(session, min(previous_day, transaction.occurred_at))
 
     audit.record_diff(
         session,
@@ -329,6 +338,7 @@ def delete_transaction(session: Session, transaction_id: int) -> None:
     transaction = get_transaction(session, transaction_id)
     transaction.soft_delete()
     session.flush()
+    daily.mark_dirty_from(session, transaction.occurred_at)
     audit.record(session, entity="transaction", entity_id=transaction_id, action="delete")
 
 
@@ -337,6 +347,7 @@ def restore_transaction(session: Session, transaction_id: int) -> Transaction:
     if transaction.is_deleted:
         transaction.restore()
         session.flush()
+        daily.mark_dirty_from(session, transaction.occurred_at)
         audit.record(session, entity="transaction", entity_id=transaction_id, action="restore")
     return transaction
 

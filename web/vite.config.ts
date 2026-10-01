@@ -48,11 +48,16 @@ export default defineConfig({
       output: {
         // 拆包策略：把体积大、变更频率低的库独立出来，
         // 使后续升级单个库时不必让用户重新下载全部资源。
-        // 说明：echarts 将在 P2 首次被真正 import；此时手动分包会生成空 chunk 并告警，
-        // 因此等 P2 接入图表后再把 vendor_charts 加回（计划已记录在 docs/PLAN.md）。
+        // 分包策略：把体积大、变动少的第三方库单独成 chunk。
+        // 收益有两层：① 业务代码改动不会让用户重新下载图表库；
+        // ② 首屏不必等图表库下载完（它只被统计与日历页按需引入）。
         manualChunks: {
           vendor_react: ['react', 'react-dom', 'react-router-dom'],
           vendor_motion: ['framer-motion'],
+          // P2 起 echarts 被真正 import，因此在这里固定分包。
+          // 不拆的话它会被并进主包，主包从 140KB 涨到 770KB ——
+          // 而记账页根本用不到图表，那部分是纯浪费。
+          vendor_charts: ['echarts/core', 'echarts/charts', 'echarts/components', 'echarts/renderers'],
         },
       },
     },

@@ -41,34 +41,6 @@ def cash_flow(
     return stats_service.cash_flow_trend(session, months=months, reference=reference)
 
 
-@router.get("/calendar", summary="日历热力数据（按天聚合）")
-def calendar(
-    start: date = Query(description="起始日期（含）"),
-    end: date = Query(description="结束日期（含）"),
-    include_transfers: bool = Query(default=False),
-    session: Session = SessionDep,
-) -> list[dict[str, Any]]:
-    """返回区间内**每一天**的数据（没有记账的日子也会占位）。
-
-    占位是有意的：日历缺少格子会让用户以为应用坏了，
-    而"这天没记账"本身就是要展示的信息（REQ-20 的登记状态指标）。
-    """
-    totals = transactions_service.daily_totals(
-        session, start=start, end=end, include_transfers=include_transfers
-    )
-    return [
-        {
-            "date": item.day.isoformat(),
-            "income_minor": item.income_minor,
-            "expense_minor": item.expense_minor,
-            "net_minor": item.income_minor - item.expense_minor,
-            "transaction_count": item.transaction_count,
-            "has_entries": item.transaction_count > 0,
-        }
-        for item in totals
-    ]
-
-
 @router.get("/summary", summary="任意区间收支汇总")
 def summary(
     start: date | None = Query(default=None),

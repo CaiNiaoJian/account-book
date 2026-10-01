@@ -199,6 +199,9 @@ class TestSeedData:
         assert counts["accounts"] == 3
         # 分类树必须"精细且齐全"：两个方向合计远超 60 个节点
         assert counts["categories"] > 60
+        # P2：机构与卡面字典（卡片墙的配色与卡面依赖它们）
+        assert counts["institutions"] >= 20
+        assert counts["card_artworks"] >= 6
 
     def test_seed_is_idempotent(self, database: Database) -> None:
         with database.session() as session:
@@ -207,7 +210,13 @@ class TestSeedData:
             second = ensure_seed_data(session)
 
         assert first["categories"] > 0
-        assert second == {"currencies": 0, "categories": 0, "accounts": 0}
+        assert second == {
+            "currencies": 0,
+            "categories": 0,
+            "accounts": 0,
+            "institutions": 0,
+            "card_artworks": 0,
+        }
 
     def test_seed_does_not_overwrite_user_edits(self, database: Database) -> None:
         """用户改过的内置分类，在后续补齐时必须保留。"""

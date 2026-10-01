@@ -33,7 +33,7 @@ from ..core.domain import AccountType
 from ..core.errors import ConflictError, NotFoundError, ValidationError
 from ..core.money import DEFAULT_CURRENCY
 from ..db.models import Account, Transaction
-from . import audit
+from . import audit, daily
 
 __all__ = [
     "ACCOUNT_MUTABLE_FIELDS",
@@ -140,6 +140,8 @@ def create_account(session: Session, **fields: Any) -> Account:
     account = Account(**fields)
     session.add(account)
     session.flush()
+    # 新账户的起点余额会立即计入净值，因此从"最开始"标脏
+    daily.mark_dirty_from(session, None)
     audit.record(
         session,
         entity="account",
@@ -170,6 +172,11 @@ def update_account(session: Session, account_id: int, **changes: Any) -> Account
     for key, value in changes.items():
         setattr(account, key, value)
     session.flush()
+
+    # 起点余额 / 是否计入净值 / 归档都会改变历史净值曲线。
+    # 账户数量是个位数，**整体重算**比"精确推导受影响区间"更简单也更不容易错 ——
+    # 少算一天的代价是曲线错，多算一天的代价是几十毫秒。
+    daily.mark_dirty_from(session, None)
 
     audit.record_diff(
         session,
@@ -205,6 +212,7 @@ def delete_account(session: Session, account_id: int) -> None:
 
     account.soft_delete()
     session.flush()
+    daily.mark_dirty_from(session, None)
     audit.record(session, entity="account", entity_id=account_id, action="delete")
 
 

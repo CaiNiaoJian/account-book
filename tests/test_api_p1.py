@@ -336,12 +336,13 @@ class TestStatsApi:
     def test_calendar_returns_every_day(self, authed_client: ClientFixture) -> None:
         """没有记账的日子也要占位，否则日历会缺格，看起来像应用坏了。"""
         test_client, _ = authed_client
-        days = test_client.get(
-            "/api/stats/calendar", params={"start": "2026-03-01", "end": "2026-03-07"}
-        ).json()
+        payload = test_client.get("/api/calendar", params={"start": "2026-03-01", "end": "2026-03-07"}).json()
+        days = payload["days"]
         assert len(days) == 7
-        assert all(day["transaction_count"] == 0 for day in days)
-        assert all(day["has_entries"] is False for day in days)
+        assert all(day["tx_count"] == 0 for day in days)
+        assert all(day["entry_state"] == "none" for day in days)
+        assert payload["metric"] == "entry"
+        assert len(payload["metrics"]) == 6, "六类颜色主指标都要可用"
 
     def test_dashboard_shape(self, authed_client: ClientFixture) -> None:
         test_client, _ = authed_client

@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -28,13 +28,16 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
     String,
     Table,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -48,14 +51,19 @@ from ..core.domain import (
     TransactionType,
 )
 from ..core.money import DEFAULT_CURRENCY
-from .base import Base, SoftDeleteMixin, TimestampMixin, local_now
+from .base import Base, SoftDeleteMixin, TimestampMixin, local_now, utc_now
 
 __all__ = [
     "Account",
     "AppSetting",
+    "AssetSnapshot",
     "AuditLog",
+    "CardArtwork",
     "Category",
     "Currency",
+    "DailyStat",
+    "DayEvent",
+    "Institution",
     "Member",
     "Project",
     "Tag",
@@ -134,11 +142,21 @@ class Account(Base, TimestampMixin, SoftDeleteMixin):
         BigInteger, nullable=False, default=0, comment="建账起点余额（最小单位）"
     )
 
-    # ---- 展示与卡片（REQ-15 资产卡片墙的字段在此预留） ----
+    # ---- 展示与卡片（REQ-15 资产卡片墙） ----
     icon: Mapped[str] = mapped_column(String(48), nullable=False, default="accounts")
     color: Mapped[str] = mapped_column(String(16), nullable=False, default="accent")
     institution: Mapped[str] = mapped_column(String(64), nullable=False, default="", comment="银行/机构名")
     card_no_tail: Mapped[str] = mapped_column(String(8), nullable=False, default="", comment="卡号后四位")
+
+    #: 机构字典键（对应 ``institutions.key``）。用它而不是名称字符串：
+    #: 机构改名时卡面配色与 Logo 不该跟着失效。
+    brand_key: Mapped[str] = mapped_column(String(32), nullable=False, default="", comment="机构键")
+    #: 卡面主题键（对应 ``card_artworks.key``）
+    card_style: Mapped[str] = mapped_column(String(32), nullable=False, default="aurora")
+    #: 卡组织：``unionpay`` / ``visa`` / ``mastercard`` / ``""``
+    card_network: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    #: 卡面色调微调（覆盖主题的主色；空字符串表示用主题自带色）
+    theme_tint: Mapped[str] = mapped_column(String(16), nullable=False, default="")
 
     # ---- 信用卡相关 ----
     credit_limit_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -148,6 +166,9 @@ class Account(Base, TimestampMixin, SoftDeleteMixin):
     # ---- 行为 ----
     include_in_net_worth: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: 显示顺序。**卡片墙与账户列表共用这一个字段** ——
+    #: 计划里另有一个 ``display_order``，但那会造成"两处顺序不一致"，
+    #: 而用户其实只想要一个顺序：拖到哪就是哪。
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -386,6 +407,164 @@ class TransactionSplit(Base, TimestampMixin):
 # -----------------------------------------------------------------------------
 # 审计
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# 机构与卡面（REQ-15 资产卡片墙）
+# -----------------------------------------------------------------------------
+class Institution(Base, TimestampMixin, SoftDeleteMixin):
+    """机构字典（银行 / 支付渠道 / 券商）。
+
+    为什么存表而不是让用户手打机构名：卡面的配色与标识需要**稳定的键**。
+    如果用名称字符串当键，用户把"招商银行"改成"招行"就会让卡面褪色。
+    """
+
+    __tablename__ = "institutions"
+    __table_args__ = (
+        Index("uq_institutions_key_active", "key", unique=True, sqlite_where=text("deleted_at IS NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(32), nullable=False, comment="稳定键，如 cmb / alipay")
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="bank", comment="bank/wallet/broker/other"
+    )
+    #: 品牌主色（设计令牌名，不写死色值 —— 日夜主题要能各自校准）
+    brand_color: Mapped[str] = mapped_column(String(16), nullable=False, default="accent")
+    #: 标识资源的相对路径；为空则用文字缩写
+    logo_ref: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+
+
+class CardArtwork(Base, TimestampMixin):
+    """卡面主题。
+
+    ``spec`` 是**自绘卡面的配方**（渐变色标、几何纹理类型、光泽角度），
+    而不是一张位图：这样卡面在任意尺寸与 DPI 下都清晰，
+    也能随日夜主题自动校准。用户上传的图片走 ``file_ref``。
+    """
+
+    __tablename__ = "card_artworks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, comment="稳定键")
+    name: Mapped[str] = mapped_column(String(48), nullable=False)
+    #: ``builtin`` 内置 / ``uploaded`` 用户上传
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="builtin")
+    #: 卡面配方（JSON）：{"stops": [...], "texture": "grain", "sheen": 120, "ink": "light"}
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    #: 上传图片在 ``data/attachments/cards/`` 下的文件名
+    file_ref: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    author: Mapped[str] = mapped_column(String(64), nullable=False, default="内置")
+    license: Mapped[str] = mapped_column(String(64), nullable=False, default="项目自有")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+
+
+# -----------------------------------------------------------------------------
+# 日结缓存与快照（REQ-17 / REQ-20 的数据源）
+# -----------------------------------------------------------------------------
+class DailyStat(Base, TimestampMixin):
+    """每日汇总缓存。
+
+    为什么要有缓存表，而不是每次查询都聚合流水：
+
+    1. 日历要一次画 53 周 × 7 天 = 371 天，逐日聚合就是 371 次查询；
+    2. ``anomaly_score``（与同星期历史基线的偏离）与 ``entry_state``
+       无法从单日流水推出来，必须逐日落库；
+    3. ``top_category_id`` 需要"分账优先"的口径，放在聚合里算一次即可。
+
+    权威性说明：**流水是唯一事实来源**，本表只是派生缓存。
+    因此每次流水变更都会把受影响区间标记为脏，读取时按需重算
+    （见 ``services/daily.py``）—— 缓存与流水不一致时以流水为准。
+    """
+
+    __tablename__ = "daily_stats"
+    __table_args__ = (
+        Index("ix_daily_stats_entry_state", "entry_state"),
+        CheckConstraint(
+            "entry_state IN ('none', 'logged', 'confirmed')",
+            name="entry_state_domain",
+        ),
+    )
+
+    #: 本地日期（YYYY-MM-DD 的字符串形式由 SQLAlchemy Date 处理）
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    income_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    expense_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    #: 收入 - 支出（转账与校准不计入）
+    net_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    #: 当日收盘净值（= 当日 asset_snapshots 的净值合计）
+    net_worth_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    #: 转账与校准的当日流量（用于"资产变化幅度"指标）
+    transfer_in_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    transfer_out_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    tx_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 未清算流水数 —— 参与"部分登记"的判定
+    pending_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 登记状态：``none`` 无记录 / ``logged`` 有记录 / ``confirmed`` 用户已核对
+    entry_state: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
+    entry_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    top_category_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: 与"同星期近 8 周基线"的偏离程度（0 = 正常，越大越异常）
+    anomaly_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    has_attachment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: 本次重算时刻（UTC）。用于判断缓存新鲜度
+    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utc_now)
+
+
+class AssetSnapshot(Base, TimestampMixin):
+    """每日每账户余额快照。
+
+    这是**一切时序图与净值曲线的唯一数据源**。不每次全表重算的原因：
+    净值曲线需要"每一天的收盘余额"，而这必须按日固化下来 ——
+    流水的插入与删除会改变历史某天的余额，所以快照也需要增量重算。
+    """
+
+    __tablename__ = "asset_snapshots"
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", "account_id", name="uq_asset_snapshots_date_account"),
+        Index("ix_asset_snapshots_date", "snapshot_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    balance_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    #: 该账户当日收盘净值贡献（= 计入净资产时取 balance，否则 0）
+    net_worth_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    #: ``auto`` 日结自动 / ``manual`` 手动校准
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
+
+
+class DayEvent(Base, TimestampMixin, SoftDeleteMixin):
+    """当日事件日志（REQ-20）。
+
+    "事件 / 心情 / 纪念日 / 备注 / 待办"共用一张表：
+    它们的字段完全一致，差别只在 ``kind``。分成五张表只会让
+    "取某天的所有事件"变成五次查询 + 五次合并。
+    """
+
+    __tablename__ = "day_events"
+    __table_args__ = (
+        Index("ix_day_events_date", "date", "sort_order"),
+        CheckConstraint(
+            "kind IN ('event', 'mood', 'anniversary', 'note', 'todo')",
+            name="day_event_kind_domain",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="event")
+    title: Mapped[str] = mapped_column(String(96), nullable=False, default="")
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: 标签名列表（事件不参与流水统计，故不建关联表）
+    tags: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    attachments: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+
+
 class AuditLog(Base, TimestampMixin):
     """变更审计 —— 回答"这三万块的记录什么时候被改成了三千"。
 

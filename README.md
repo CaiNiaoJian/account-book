@@ -140,7 +140,7 @@ accountbook/
 |---|---|---|
 | **P0** | 基座骨架：外壳、本地服务、设计系统、主题、i18n、导航 | ✅ 已完成 |
 | **P1** | 记账核心闭环：数据模型、流水、账户、分类、快捷记账 | ✅ 已完成 |
-| P2 | 资产卡片墙与可视化体系（含 GitHub 式日历） | ⏳ |
+| **P2** | 资产卡片墙与可视化体系（含 GitHub 式日历） | ✅ 已完成 |
 | P3 | 资产 K 线与长期趋势 | ⏳ |
 | P4 | 存钱罐与目标储蓄 | ⏳ |
 | P5 | 报告引擎与台账 | ⏳ |
@@ -155,6 +155,13 @@ accountbook/
 数据落在本地 SQLite，启动时自动建库与迁移。
 验收记录见 [docs/ACCEPTANCE_P1.md](docs/ACCEPTANCE_P1.md)，
 数据结构见 [docs/DATA_MODEL.md](docs/DATA_MODEL.md)。
+
+**P2 已可用**：资产卡片墙（自绘卡面、拖拽排序、额度进度）、GitHub 式年历热力图
+（六类颜色指标、事件角标、导出 PNG）、当日详情（余额阶梯曲线、构成、变动归因、事件日志）、
+ECharts 图表（Apple 主题随日夜切换）。
+
+验收记录见 [docs/ACCEPTANCE_P2.md](docs/ACCEPTANCE_P2.md)，
+日历与日结指标口径见 [docs/CALENDAR_METRICS.md](docs/CALENDAR_METRICS.md)。
 
 界面截图见 [docs/screenshots](docs/screenshots)。
 

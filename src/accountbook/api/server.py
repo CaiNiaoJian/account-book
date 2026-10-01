@@ -32,6 +32,8 @@ from .. import APP_ID, APP_NAME, APP_NAME_EN, BUILD_PHASE, __version__
 from ..core.security import COOKIE_NAME, is_loopback_host, origin_allowed
 from .deps import register_domain_error_handler
 from .routes import accounts as accounts_routes
+from .routes import assets as assets_routes
+from .routes import calendar as calendar_routes
 from .routes import categories as categories_routes
 from .routes import meta as meta_routes
 from .routes import stats as stats_routes
@@ -165,6 +167,8 @@ def create_app(ctx: AppContext) -> FastAPI:
     app.include_router(transactions_routes.router)
     app.include_router(taxonomy_routes.router)
     app.include_router(stats_routes.router)
+    app.include_router(calendar_routes.router)
+    app.include_router(assets_routes.router)
 
     # ---- 前端托管（必须最后注册，因为它是通配路由） -------------------------
     @app.get("/{full_path:path}", include_in_schema=False)

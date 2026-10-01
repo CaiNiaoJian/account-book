@@ -389,19 +389,139 @@ export interface DashboardData {
   accounts: AccountOverviewItem[]
 }
 
-export interface CalendarDay {
-  date: string
-  income_minor: number
-  expense_minor: number
-  net_minor: number
-  transaction_count: number
-  has_entries: boolean
-}
 
 export interface IntegrityReport {
   ok: boolean
   issues: { code: string; count: number; severity: string; message: string }[]
   stats: { transactions: number; transfer_like: number; accounts: number; categories: number }
+}
+
+// -----------------------------------------------------------------------------
+// P2：日历 / 卡片墙 / 机构 / 卡面
+// -----------------------------------------------------------------------------
+export type CalendarMetric = 'entry' | 'expense' | 'income' | 'net' | 'net_worth_change' | 'anomaly'
+
+export interface CalendarDay {
+  date: string
+  income_minor: number
+  expense_minor: number
+  net_minor: number
+  net_worth_minor: number
+  tx_count: number
+  pending_count: number
+  entry_state: 'none' | 'logged' | 'confirmed'
+  anomaly_score: number
+  top_category_id: number | null
+  top_category_name: string
+  event_count: number
+  has_attachment: boolean
+  /** 当前主指标的原始值（`net_worth_change` 为比例，其余为金额或分数） */
+  metric_value: number
+  /** 服务端算好的强度分级：entry 为 0..2，其余为 0..4 */
+  level: number
+  badges: string[]
+}
+
+export interface CalendarResponse {
+  metric: CalendarMetric
+  metrics: CalendarMetric[]
+  start: string
+  end: string
+  days: CalendarDay[]
+}
+
+export interface DayEvent {
+  id: number
+  date: string
+  kind: 'event' | 'mood' | 'anniversary' | 'note' | 'todo'
+  title: string
+  body: string
+  tags: unknown[]
+  attachments: unknown[]
+  sort_order: number
+}
+
+export interface DayDetail {
+  date: string
+  stat: {
+    income_minor: number
+    expense_minor: number
+    net_minor: number
+    net_worth_minor: number
+    opening_net_worth_minor: number
+    tx_count: number
+    entry_state: string
+    anomaly_score: number
+    event_count: number
+  }
+  /** 日内余额阶梯曲线：拐点落在流水真实发生的时刻 */
+  net_worth_series: { at: string; net_worth_minor: number; label: string; transaction_id?: number }[]
+  composition: { category_id: number | null; category_name: string; amount_minor: number }[]
+  weekday_average_expense_minor: number
+  contributions: {
+    transaction_id: number
+    label: string
+    type: string
+    delta_minor: number
+    category_name: string
+  }[]
+  events: DayEvent[]
+  transactions: Transaction[]
+}
+
+export interface CardArtwork {
+  id: number
+  key: string
+  name: string
+  kind: 'builtin' | 'uploaded'
+  /** 卡面配方：{ stops: [[颜色, 位置]], texture, ink, sheen } */
+  spec: { stops: [string, number][]; texture: string; ink: string; sheen: number }
+  file_ref: string
+  author: string
+  license: string
+  sort_order: number
+}
+
+export interface Institution {
+  id: number
+  key: string
+  name: string
+  kind: string
+  brand_color: string
+  logo_ref: string
+  is_system: boolean
+  sort_order: number
+}
+
+export interface CardItem extends AccountOverviewItem {
+  brand_key: string
+  brand_name: string
+  brand_color: string
+  card_style: string
+  card_network: string
+  theme_tint: string
+  bill_day: number | null
+  due_day: number | null
+  group: string
+  credit_used_minor: number
+  credit_available_minor: number
+}
+
+export interface AssetWall {
+  groups: { key: string; name: string; cards: CardItem[] }[]
+  summary: {
+    assets_minor: number
+    liabilities_minor: number
+    net_worth_minor: number
+    account_count: number
+    counted_in_net_worth: number
+    available_minor: number
+    credit_limit_minor: number
+    credit_used_minor: number
+    credit_available_minor: number
+  }
+  institutions: Institution[]
+  artworks: CardArtwork[]
 }
 
 // -----------------------------------------------------------------------------
@@ -522,10 +642,6 @@ export const api = {
     request<
       { month: string; income_minor: number; expense_minor: number; net_minor: number; transaction_count: number }[]
     >(`/api/stats/cash-flow${query(params)}`),
-  calendar: (start: string, end: string, includeTransfers = false) =>
-    request<CalendarDay[]>(
-      `/api/stats/calendar${query({ start, end, include_transfers: includeTransfers })}`,
-    ),
   summary: (params: { start?: string; end?: string; top_categories?: number } = {}) =>
     request<{
       income_minor: number
@@ -535,4 +651,62 @@ export const api = {
       by_category: CategoryBreakdownItem[]
     }>(`/api/stats/summary${query(params)}`),
   integrity: () => request<IntegrityReport>('/api/stats/integrity'),
+
+  // ---- P2：日历 / 当日详情 / 事件 ------------------------------------------
+  /**
+   * 日历热力数据。
+   *
+   * ``level`` 由服务端按分位数算好 —— 前端**不要**自己定阈值，
+   * 否则图例、格子和导出 PNG 会各有一套深浅标准。
+   */
+  calendar: (start: string, end: string, metric: CalendarMetric = 'entry') =>
+    request<CalendarResponse>(`/api/calendar${query({ start, end, metric })}`),
+  dayDetail: (day: string) => request<DayDetail>(`/api/calendar/day/${day}`),
+  confirmDay: (day: string, confirmed = true) =>
+    request<{ date: string; confirmed: boolean }>(
+      `/api/calendar/day/${day}/confirm${query({ confirmed })}`,
+      { method: 'POST' },
+    ),
+  netWorthSeries: (start: string, end: string) =>
+    request<{ date: string; net_worth_minor: number; income_minor: number; expense_minor: number; net_minor: number }[]>(
+      `/api/calendar/net-worth${query({ start, end })}`,
+    ),
+  events: (start: string, end: string) => request<DayEvent[]>(`/api/calendar/events${query({ start, end })}`),
+  createEvent: (payload: { date: string; kind?: string; title: string; body?: string }) =>
+    request<DayEvent>('/api/calendar/events', { method: 'POST', body: JSON.stringify(payload) }),
+  deleteEvent: (id: number) => request<void>(`/api/calendar/events/${id}`, { method: 'DELETE' }),
+
+  // ---- P2：卡片墙 ----------------------------------------------------------
+  assetWall: (params: { include_archived?: boolean } = {}) =>
+    request<AssetWall>(`/api/assets/wall${query(params)}`),
+  reorderAccounts: (order: number[]) =>
+    request<{ reordered: number }>('/api/assets/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ order }),
+    }),
+  updateAccountCard: (
+    accountId: number,
+    changes: {
+      brand_key?: string
+      card_style?: string
+      card_network?: string
+      theme_tint?: string
+      card_no_tail?: string
+      sort_order?: number
+    },
+  ) =>
+    request<{ id: number; card_style: string; brand_key: string }>(
+      `/api/assets/accounts/${accountId}/card`,
+      { method: 'PATCH', body: JSON.stringify(changes) },
+    ),
+  institutions: () => request<Institution[]>('/api/institutions'),
+  createInstitution: (payload: { key: string; name: string; kind?: string; brand_color?: string }) =>
+    request<Institution>('/api/institutions', { method: 'POST', body: JSON.stringify(payload) }),
+  cardArtworks: () => request<CardArtwork[]>('/api/card-artworks'),
+  createCardArtwork: (payload: {
+    key: string
+    name: string
+    spec: Record<string, unknown>
+    kind?: string
+  }) => request<CardArtwork>('/api/card-artworks', { method: 'POST', body: JSON.stringify(payload) }),
 }

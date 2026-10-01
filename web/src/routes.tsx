@@ -21,6 +21,8 @@ import { ALL_NAV_ITEMS } from '@/app/navigation'
 import { useI18n } from '@/i18n'
 import { AboutPage } from '@/pages/About'
 import { AccountsPage } from '@/pages/Accounts'
+import { CalendarPage } from '@/pages/Calendar'
+import { CardsPage } from '@/pages/Cards'
 import { CategoriesPage } from '@/pages/Categories'
 import { DashboardPage } from '@/pages/Dashboard'
 import { PlaceholderPage } from '@/pages/Placeholder'
@@ -35,6 +37,8 @@ const IMPLEMENTED_ROUTES: Record<string, ReactNode> = {
   '/quick-add': <TransactionsPage />,
   '/accounts': <AccountsPage />,
   '/categories': <CategoriesPage />,
+  '/cards': <CardsPage />,
+  '/calendar': <CalendarPage />,
   '/tags': <TagsProjectsPage />,
   '/settings': <SettingsPage />,
   '/about': <AboutPage />,

@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -22,6 +22,10 @@ __all__ = [
     "AccountOut",
     "AccountOverviewOut",
     "AccountUpdate",
+    "CardArtworkCreate",
+    "CardArtworkOut",
+    "CardArtworkUpdate",
+    "CardUpdate",
     "CategoryCreate",
     "CategoryMergeResult",
     "CategoryMoveRequest",
@@ -29,13 +33,19 @@ __all__ = [
     "CategoryOut",
     "CategoryUpdate",
     "CurrencyOut",
+    "DayEventCreate",
+    "DayEventOut",
     "EnumsOut",
+    "InstitutionCreate",
+    "InstitutionOut",
+    "InstitutionUpdate",
     "MemberCreate",
     "MemberOut",
     "MemberUpdate",
     "ProjectCreate",
     "ProjectOut",
     "ProjectUpdate",
+    "ReorderRequest",
     "SplitIn",
     "SplitOut",
     "TagCreate",
@@ -383,6 +393,105 @@ class MemberOut(BaseModel):
     color: str
     is_self: bool
     note: str
+
+
+# -----------------------------------------------------------------------------
+# P2：日历事件 / 卡片墙 / 机构 / 卡面
+# -----------------------------------------------------------------------------
+class DayEventCreate(RequestModel):
+    date: date
+    kind: Literal["event", "mood", "anniversary", "note", "todo"] = "event"
+    title: str = Field(default="", max_length=96)
+    body: str = ""
+    tags: list[str] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DayEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    date: date
+    kind: str
+    title: str
+    body: str
+    tags: list[Any] = Field(default_factory=list)
+    attachments: list[Any] = Field(default_factory=list)
+    sort_order: int = 100
+
+
+class ReorderRequest(RequestModel):
+    """拖拽排序：一次提交完整顺序。
+
+    做成"整体提交"而不是逐条 PATCH：拖拽产生的是一个完整的新顺序，
+    逐条写入既慢又可能出现中间态（前端刷新时看到半截顺序）。
+    """
+
+    order: list[int] = Field(min_length=1, description="账户 id 的目标顺序")
+
+
+class CardUpdate(RequestModel):
+    """卡片外观。字段全部可选，只发改动项。"""
+
+    brand_key: str | None = None
+    card_style: str | None = None
+    card_network: Literal["", "unionpay", "visa", "mastercard", "amex", "jcb"] | None = None
+    theme_tint: str | None = None
+    card_no_tail: str | None = Field(default=None, max_length=4)
+    sort_order: int | None = None
+
+
+class InstitutionCreate(RequestModel):
+    key: str = Field(min_length=2, max_length=32, description="稳定英文键，如 cmb")
+    name: str = Field(min_length=1, max_length=64)
+    kind: Literal["bank", "wallet", "broker", "other"] = "bank"
+    brand_color: str = "accent"
+
+
+class InstitutionUpdate(RequestModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    kind: Literal["bank", "wallet", "broker", "other"] | None = None
+    brand_color: str | None = None
+    logo_ref: str | None = Field(default=None, max_length=128)
+    sort_order: int | None = None
+
+
+class InstitutionOut(BaseModel):
+    id: int
+    key: str
+    name: str
+    kind: str
+    brand_color: str
+    logo_ref: str
+    is_system: bool
+    sort_order: int
+
+
+class CardArtworkCreate(RequestModel):
+    key: str = Field(min_length=2, max_length=32)
+    name: str = Field(min_length=1, max_length=48)
+    spec: dict[str, Any]
+    kind: Literal["builtin", "uploaded"] = "uploaded"
+    file_ref: str = ""
+
+
+class CardArtworkUpdate(RequestModel):
+    name: str | None = Field(default=None, min_length=1, max_length=48)
+    spec: dict[str, Any] | None = None
+    file_ref: str | None = None
+    sort_order: int | None = None
+
+
+class CardArtworkOut(BaseModel):
+    id: int
+    key: str
+    name: str
+    kind: str
+    spec: dict[str, Any]
+    file_ref: str
+    author: str
+    license: str
+    sort_order: int
 
 
 # -----------------------------------------------------------------------------

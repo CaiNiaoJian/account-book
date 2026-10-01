@@ -25,22 +25,145 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..core.domain import AccountType, CategoryKind
 from ..core.money import DEFAULT_CURRENCY
-from .models import Account, AppSetting, Category, Currency
+from .models import Account, AppSetting, CardArtwork, Category, Currency, Institution
 
-__all__ = ["SEED_CATEGORY_TREE", "SEED_VERSION", "ensure_seed_data", "seed_currencies"]
+__all__ = [
+    "SEED_CARD_ARTWORKS",
+    "SEED_CATEGORY_TREE",
+    "SEED_INSTITUTIONS",
+    "SEED_VERSION",
+    "ensure_seed_data",
+    "seed_card_artworks",
+    "seed_currencies",
+    "seed_institutions",
+]
 
 _logger = logging.getLogger(__name__)
 
-#: 种子数据版本。**新增内置分类或币种时递增它**，老用户下次启动即可补齐。
-SEED_VERSION = 1
+#: 种子数据版本。**新增内置分类 / 币种 / 机构 / 卡面时递增它**，老用户下次启动即可补齐。
+SEED_VERSION = 2
 
 _SEED_VERSION_KEY = "seed_version"
+
+
+# -----------------------------------------------------------------------------
+# 机构与卡面（REQ-15 资产卡片墙）
+# -----------------------------------------------------------------------------
+#: (稳定键, 名称, 类型, 品牌主色)。
+#: 主色用**设计令牌名**而不是色值 —— 日夜主题各自校准时不需要改动数据。
+SEED_INSTITUTIONS: tuple[tuple[str, str, str, str], ...] = (
+    ("icbc", "中国工商银行", "bank", "red"),
+    ("ccb", "中国建设银行", "bank", "indigo"),
+    ("abc", "中国农业银行", "bank", "teal"),
+    ("boc", "中国银行", "bank", "red"),
+    ("cmb", "招商银行", "bank", "red"),
+    ("bocom", "交通银行", "bank", "indigo"),
+    ("psbc", "中国邮政储蓄银行", "bank", "green"),
+    ("spdb", "浦发银行", "bank", "indigo"),
+    ("citic", "中信银行", "bank", "red"),
+    ("ceb", "光大银行", "bank", "purple"),
+    ("cmbc", "民生银行", "bank", "teal"),
+    ("cib", "兴业银行", "bank", "indigo"),
+    ("alipay", "支付宝", "wallet", "accent"),
+    ("wechat", "微信支付", "wallet", "green"),
+    ("unionpay_quick", "云闪付", "wallet", "red"),
+    ("huabei", "花呗", "wallet", "accent"),
+    ("jd_finance", "京东金融", "wallet", "red"),
+    ("meituan", "美团钱包", "wallet", "yellow"),
+    ("eastmoney", "东方财富", "broker", "orange"),
+    ("tianhong", "天弘基金", "broker", "orange"),
+    ("antfund", "蚂蚁基金", "broker", "accent"),
+    ("other", "其它机构", "other", "gray"),
+)
+
+#: 内置卡面配方：**自绘抽象卡面**（渐变 + 纹理 + 光泽），
+#: 不复制任何受版权保护的银行或第三方商标图样。
+#: ``ink`` 决定卡面文字用浅色还是深色 —— 由渐变亮度决定，
+#: 写死可避免"深色渐变配深色文字"这类对比度事故。
+SEED_CARD_ARTWORKS: tuple[tuple[str, str, dict[str, Any]], ...] = (
+    (
+        "aurora",
+        "极光",
+        {
+            "stops": [["#1c3f8f", 0], ["#2f7fd4", 55], ["#66c2c0", 100]],
+            "texture": "aurora",
+            "sheen": 118,
+            "ink": "light",
+        },
+    ),
+    (
+        "obsidian",
+        "曜石",
+        {
+            "stops": [["#14161c", 0], ["#2a2f3a", 60], ["#4a5160", 100]],
+            "texture": "grain",
+            "sheen": 132,
+            "ink": "light",
+        },
+    ),
+    (
+        "sakura",
+        "樱",
+        {
+            "stops": [["#c0447a", 0], ["#e07aa8", 55], ["#f6c3d5", 100]],
+            "texture": "soft",
+            "sheen": 108,
+            "ink": "light",
+        },
+    ),
+    (
+        "mint",
+        "薄荷",
+        {
+            "stops": [["#0f7f6c", 0], ["#37b39a", 55], ["#9fe3cf", 100]],
+            "texture": "soft",
+            "sheen": 124,
+            "ink": "light",
+        },
+    ),
+    (
+        "sunset",
+        "落日",
+        {
+            "stops": [["#b8471f", 0], ["#e08340", 55], ["#f6cf8a", 100]],
+            "texture": "aurora",
+            "sheen": 112,
+            "ink": "dark",
+        },
+    ),
+    (
+        "graphite",
+        "石墨",
+        {
+            "stops": [["#3a3f46", 0], ["#5b626c", 60], ["#8b929c", 100]],
+            "texture": "grain",
+            "sheen": 140,
+            "ink": "light",
+        },
+    ),
+    (
+        "royal",
+        "御蓝",
+        {
+            "stops": [["#2a1a6e", 0], ["#4d3bb5", 55], ["#8f7ce0", 100]],
+            "texture": "aurora",
+            "sheen": 126,
+            "ink": "light",
+        },
+    ),
+    (
+        "plain",
+        "素",
+        {"stops": [["#5a6070", 0], ["#7b8291", 100]], "texture": "none", "sheen": 150, "ink": "light"},
+    ),
+)
 
 
 # -----------------------------------------------------------------------------
@@ -431,6 +554,49 @@ def seed_accounts(session: Session) -> int:
     return len(SEED_ACCOUNTS)
 
 
+def seed_institutions(session: Session) -> int:
+    """补齐缺失的内置机构。已存在的不覆盖（用户可能改过名称或主色）。"""
+    existing = set(session.scalars(select(Institution.key)).all())
+    added = 0
+    for index, (key, name, kind, brand_color) in enumerate(SEED_INSTITUTIONS):
+        if key in existing:
+            continue
+        session.add(
+            Institution(
+                key=key,
+                name=name,
+                kind=kind,
+                brand_color=brand_color,
+                is_system=True,
+                sort_order=index * 10,
+            )
+        )
+        added += 1
+    return added
+
+
+def seed_card_artworks(session: Session) -> int:
+    """补齐缺失的内置卡面。"""
+    existing = set(session.scalars(select(CardArtwork.key)).all())
+    added = 0
+    for index, (key, name, spec) in enumerate(SEED_CARD_ARTWORKS):
+        if key in existing:
+            continue
+        session.add(
+            CardArtwork(
+                key=key,
+                name=name,
+                kind="builtin",
+                spec=spec,
+                author="内置",
+                license="项目自有",
+                sort_order=index * 10,
+            )
+        )
+        added += 1
+    return added
+
+
 def ensure_seed_data(session: Session) -> dict[str, int]:
     """确保种子数据就绪；返回本次新增数量（供日志与测试断言）。
 
@@ -443,12 +609,14 @@ def ensure_seed_data(session: Session) -> dict[str, int]:
         applied_version = int(raw) if isinstance(raw, (int, float, str)) and str(raw).isdigit() else 0
 
     if applied_version >= SEED_VERSION:
-        return {"currencies": 0, "categories": 0, "accounts": 0}
+        return {"currencies": 0, "categories": 0, "accounts": 0, "institutions": 0, "card_artworks": 0}
 
     counts = {
         "currencies": seed_currencies(session),
         "categories": seed_categories(session),
         "accounts": seed_accounts(session),
+        "institutions": seed_institutions(session),
+        "card_artworks": seed_card_artworks(session),
     }
 
     if setting is None:
@@ -458,10 +626,12 @@ def ensure_seed_data(session: Session) -> dict[str, int]:
         setting.value = {"version": SEED_VERSION}
 
     _logger.info(
-        "内置数据已初始化（seed_version=%s）：币种 +%s，分类 +%s，账户 +%s",
+        "内置数据已初始化（seed_version=%s）：币种 +%s，分类 +%s，账户 +%s，机构 +%s，卡面 +%s",
         SEED_VERSION,
         counts["currencies"],
         counts["categories"],
         counts["accounts"],
+        counts["institutions"],
+        counts["card_artworks"],
     )
     return counts

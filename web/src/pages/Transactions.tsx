@@ -26,7 +26,7 @@ import { staggerContainer, staggerItem } from '@/design/motion'
 import { useI18n } from '@/i18n'
 import {
   api,
-  type CalendarDay,
+  type CalendarDay as HeatCell,
   type Transaction,
   type TransactionFilter,
 } from '@/lib/api'
@@ -89,7 +89,7 @@ export function TransactionsPage() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [calendar, setCalendar] = useState<CalendarDay[]>([])
+  const [calendar, setCalendar] = useState<HeatCell[]>([])
   const [monthCursor, setMonthCursor] = useState(() => {
     const today = new Date()
     return { year: today.getFullYear(), month: today.getMonth() }
@@ -142,8 +142,8 @@ export function TransactionsPage() {
     const first = new Date(monthCursor.year, monthCursor.month, 1)
     const last = new Date(monthCursor.year, monthCursor.month + 1, 0)
     void api
-      .calendar(localDayKey(first), localDayKey(last), includeTransfers)
-      .then(setCalendar)
+      .calendar(localDayKey(first), localDayKey(last), 'expense')
+      .then((response) => setCalendar(response.days))
       .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
   }, [view, monthCursor, includeTransfers])
 
@@ -660,6 +660,27 @@ function TimelineView({
 // -----------------------------------------------------------------------------
 // 日历
 // -----------------------------------------------------------------------------
+/** 空日历格：字段必须与后端 CalendarDay 完全一致，否则类型检查会（也应该）失败 */
+function EMPTY_CELL(date: string): HeatCell {
+  return {
+    date,
+    income_minor: 0,
+    expense_minor: 0,
+    net_minor: 0,
+    net_worth_minor: 0,
+    tx_count: 0,
+    pending_count: 0,
+    entry_state: 'none',
+    anomaly_score: 0,
+    top_category_id: null,
+    top_category_name: '',
+    event_count: 0,
+    has_attachment: false,
+    metric_value: 0,
+    level: 0,
+    badges: [],
+  }
+}
 function CalendarView({
   cursor,
   onCursorChange,
@@ -669,7 +690,7 @@ function CalendarView({
 }: {
   cursor: { year: number; month: number }
   onCursorChange: (next: { year: number; month: number }) => void
-  days: CalendarDay[]
+  days: HeatCell[]
   preview: Transaction[]
   onPickDay: (day: string) => void
 }) {
@@ -677,7 +698,7 @@ function CalendarView({
   const { preferences } = usePreferences()
 
   const byDay = useMemo(() => {
-    const map = new Map<string, CalendarDay>()
+    const map = new Map<string, HeatCell>()
     for (const day of days) map.set(day.date, day)
     return map
   }, [days])
@@ -689,20 +710,11 @@ function CalendarView({
   const maxExpense = Math.max(1, ...days.map((day) => day.expense_minor))
   const todayKey = localDayKey()
 
-  const cells: (CalendarDay | null)[] = [
+  const cells: (HeatCell | null)[] = [
     ...Array.from({ length: leading }, () => null),
     ...Array.from({ length: monthDays }, (_, index) => {
       const key = localDayKey(new Date(cursor.year, cursor.month, index + 1))
-      return (
-        byDay.get(key) ?? {
-          date: key,
-          income_minor: 0,
-          expense_minor: 0,
-          net_minor: 0,
-          transaction_count: 0,
-          has_entries: false,
-        }
-      )
+      return byDay.get(key) ?? EMPTY_CELL(key)
     }),
   ]
 
@@ -710,7 +722,7 @@ function CalendarView({
     (accumulator, day) => {
       accumulator.income += day.income_minor
       accumulator.expense += day.expense_minor
-      if (day.has_entries) accumulator.days += 1
+      if (day.tx_count > 0) accumulator.days += 1
       return accumulator
     },
     { income: 0, expense: 0, days: 0 },
@@ -781,15 +793,15 @@ function CalendarView({
                 type="button"
                 onClick={() => onPickDay(cell.date)}
                 title={
-                  cell.has_entries
-                    ? `${cell.date}：${cell.transaction_count} 笔`
+                  cell.tx_count > 0
+                    ? `${cell.date}：${cell.tx_count} 笔`
                     : `${cell.date}：${t('ledger.noEntry')}`
                 }
                 className={`relative flex aspect-square flex-col items-center justify-start rounded-ab-sm border p-1 text-left transition-all ${
                   cell.date === todayKey ? 'border-accent' : 'border-transparent'
                 } hover:border-separator`}
                 style={
-                  cell.has_entries
+                  cell.tx_count > 0
                     ? {
                         // 颜色深浅表示当天支出占比 —— 一眼能看出"哪天花超了"，
                         // 这正是日历视图相对于列表的全部价值
@@ -805,7 +817,7 @@ function CalendarView({
                 >
                   {Number(cell.date.slice(8, 10))}
                 </span>
-                {cell.has_entries ? (
+                {cell.tx_count > 0 ? (
                   <span className="ab-tnum mt-auto text-[9px] leading-tight text-label-2">
                     {displayMinor(cell.expense_minor, 'CNY', preferences.privacy_mode, { showSymbol: false })}
                   </span>
