@@ -102,10 +102,13 @@ def list_transactions(
 @router.post("", response_model=TransactionOut, status_code=status.HTTP_201_CREATED, summary="记一笔")
 def create_transaction(payload: TransactionCreate, session: Session = SessionDep) -> TransactionOut:
     data = payload.model_dump(exclude_none=True)
+    # 分账与标签单独取出：它们的语义是"整体替换"，而不是普通字段赋值
     splits = data.pop("splits", None)
+    tag_ids = data.pop("tag_ids", None)
     transaction = transactions_service.create_transaction(
         session,
         splits=[dict(item) for item in splits] if splits else None,
+        tag_ids=tag_ids,
         **data,
     )
     return _to_out(transaction)
@@ -124,10 +127,12 @@ def update_transaction(
 ) -> TransactionOut:
     changes = payload.model_dump(exclude_unset=True)
     splits = changes.pop("splits", None)
+    tag_ids = changes.pop("tag_ids", None)
     transaction = transactions_service.update_transaction(
         session,
         transaction_id,
         splits=[dict(item) for item in splits] if splits is not None else None,
+        tag_ids=tag_ids,
         **changes,
     )
     return _to_out(transaction)

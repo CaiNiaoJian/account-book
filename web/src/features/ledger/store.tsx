@@ -36,6 +36,9 @@ import {
   type CategoryNode,
   type Currency,
   type Enums,
+  type Member,
+  type Project,
+  type Tag,
 } from '@/lib/api'
 import { registerCurrencies } from '@/lib/format'
 
@@ -55,11 +58,18 @@ interface LedgerContextValue {
   categories: Category[]
   /** 按方向分组的分类树 */
   tree: { expense: CategoryNode[]; income: CategoryNode[] }
+  /** 标签（横向维度：出差、报销、旅行…） */
+  tags: Tag[]
+  /** 项目（把一段时期的相关支出归到一处） */
+  projects: Project[]
+  /** 成员（分摊与家庭账本） */
+  members: Member[]
   refresh: () => Promise<void>
   accountName: (id: number | null | undefined) => string
   accountIcon: (id: number | null | undefined) => string
   categoryById: (id: number | null | undefined) => Category | undefined
   categoryName: (id: number | null | undefined) => string
+  tagByName: (name: string) => Tag | undefined
 }
 
 const LedgerContext = createContext<LedgerContextValue | null>(null)
@@ -84,19 +94,36 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
     expense: [],
     income: [],
   })
+  const [tags, setTags] = useState<Tag[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [members, setMembers] = useState<Member[]>([])
 
   const refresh = useCallback(async () => {
     try {
-      // 五个请求并发：它们互不依赖，串行只会让首屏多等几个来回
-      const [nextEnums, nextCurrencies, nextOverview, nextAccounts, expenseTree, incomeTree] =
-        await Promise.all([
-          api.enums(),
-          api.currencies(),
-          api.accountsOverview(),
-          api.accounts({ include_archived: true }),
-          api.categoryTree({ kind: 'expense' }),
-          api.categoryTree({ kind: 'income' }),
-        ])
+      // 全部并发：它们互不依赖，串行只会让首屏多等几个来回。
+      // 标签/项目/成员也放在这里，因为"流水列表要显示标签名""表单要选项目"
+      // 都依赖它们，各自再请求一次只会制造不同步。
+      const [
+        nextEnums,
+        nextCurrencies,
+        nextOverview,
+        nextAccounts,
+        expenseTree,
+        incomeTree,
+        nextTags,
+        nextProjects,
+        nextMembers,
+      ] = await Promise.all([
+        api.enums(),
+        api.currencies(),
+        api.accountsOverview(),
+        api.accounts({ include_archived: true }),
+        api.categoryTree({ kind: 'expense' }),
+        api.categoryTree({ kind: 'income' }),
+        api.tags(),
+        api.projects(),
+        api.members(),
+      ])
 
       registerCurrencies(nextCurrencies)
       setEnums(nextEnums)
@@ -104,6 +131,9 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
       setOverview(nextOverview)
       setAllAccounts(nextAccounts)
       setTree({ expense: expenseTree, income: incomeTree })
+      setTags(nextTags)
+      setProjects(nextProjects)
+      setMembers(nextMembers)
       setError(null)
       setStatus('ready')
     } catch (cause) {
@@ -130,6 +160,12 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
     return index
   }, [overview])
 
+  const tagIndex = useMemo(() => {
+    const index = new Map<string, Tag>()
+    for (const item of tags) index.set(item.name, item)
+    return index
+  }, [tags])
+
   const value = useMemo<LedgerContextValue>(
     () => ({
       status,
@@ -141,11 +177,15 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
       allAccounts,
       categories,
       tree,
+      tags,
+      projects,
+      members,
       refresh,
       accountName: (id) => (id ? (accountIndex.get(id)?.name ?? '') : ''),
       accountIcon: (id) => (id ? (accountIndex.get(id)?.icon ?? 'accounts') : 'accounts'),
       categoryById: (id) => (id ? categoryIndex.get(id) : undefined),
       categoryName: (id) => (id ? (categoryIndex.get(id)?.name ?? '') : ''),
+      tagByName: (name) => tagIndex.get(name),
     }),
     [
       status,
@@ -156,9 +196,13 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
       allAccounts,
       categories,
       tree,
+      tags,
+      projects,
+      members,
       refresh,
       accountIndex,
       categoryIndex,
+      tagIndex,
     ],
   )
 

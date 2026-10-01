@@ -68,7 +68,7 @@ function presetRange(preset: RangePreset): { start?: string; end?: string } {
 export function TransactionsPage() {
   const { t } = useI18n()
   const { preferences } = usePreferences()
-  const { status, accounts, categoryById, refresh } = useLedger()
+  const { status, accounts, categoryById, tags, refresh } = useLedger()
 
   const [view, setView] = useState<ViewMode>('list')
   /**
@@ -83,6 +83,7 @@ export function TransactionsPage() {
   const [keyword, setKeyword] = useState('')
   const [accountIds, setAccountIds] = useState<number[]>([])
   const [typeFilter, setTypeFilter] = useState<string[]>([])
+  const [tagIds, setTagIds] = useState<number[]>([])
   const [includeTransfers, setIncludeTransfers] = useState(true)
   const [items, setItems] = useState<Transaction[]>([])
   const [total, setTotal] = useState(0)
@@ -107,6 +108,7 @@ export function TransactionsPage() {
       end: range.end ? `${range.end}T23:59:59` : undefined,
       keyword: keyword.trim() || undefined,
       account_ids: accountIds.length > 0 ? accountIds : undefined,
+      tag_ids: tagIds.length > 0 ? tagIds : undefined,
       types: typeFilter.length > 0 ? typeFilter : undefined,
       limit: PAGE_SIZE,
       offset: 0,
@@ -114,7 +116,7 @@ export function TransactionsPage() {
     // 未显式筛类型时，用"是否包含转账"控制；显式筛类型时以类型为准
     if (typeFilter.length === 0) base.include_transfers = includeTransfers
     return base
-  }, [range, keyword, accountIds, typeFilter, includeTransfers])
+  }, [range, keyword, accountIds, tagIds, typeFilter, includeTransfers])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -312,6 +314,31 @@ export function TransactionsPage() {
         ))}
       </div>
 
+      {/* 标签筛选：只在确实有标签时出现 —— 一个永远空的筛选栏只是噪声 */}
+      {tags.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-ab-caption text-label-3">{t('ledger.tags')}</span>
+          {tags.map((tag) => (
+            <button
+              key={tag.id}
+              type="button"
+              className="ab-chip"
+              data-active={tagIds.includes(tag.id)}
+              onClick={() =>
+                setTagIds((previous) =>
+                  previous.includes(tag.id)
+                    ? previous.filter((id) => id !== tag.id)
+                    : [...previous, tag.id],
+                )
+              }
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: `rgb(var(--ab-${tag.color}))` }} />
+              {tag.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between text-ab-caption text-label-3">
         <span>{rangeLabel}</span>
         <span className="ab-tnum">{t('ledger.resultCount', { count: total })}</span>
@@ -477,6 +504,7 @@ interface RowProps {
 
 function TransactionRow({ item, category, transferLike, onEdit, onDelete }: RowProps) {
   const { t } = useI18n()
+  const { tagByName } = useLedger()
   const tone = item.type === 'income' ? 'income' : item.type === 'expense' ? 'expense' : 'neutral'
   const signed = item.type === 'expense' ? -item.amount_minor : item.amount_minor
 
@@ -492,15 +520,44 @@ function TransactionRow({ item, category, transferLike, onEdit, onDelete }: RowP
             <span className="ab-phase-badge">{t('transactionStatus.pending')}</span>
           ) : null}
         </div>
-        <div className="mt-0.5 truncate text-ab-caption text-label-3">
-          {[
-            formatTime(item.occurred_at),
-            item.payee && category?.name ? item.payee : '',
-            transferLike ? `${item.account_name} → ${item.to_account_name || t('ledger.adjustTarget')}` : item.account_name,
-            item.note,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
+        <div className="mt-0.5 flex items-center gap-1.5 text-ab-caption text-label-3">
+          <span className="truncate">
+            {[
+              formatTime(item.occurred_at),
+              item.payee && category?.name ? item.payee : '',
+              transferLike
+                ? `${item.account_name} → ${item.to_account_name || t('ledger.adjustTarget')}`
+                : item.account_name,
+              item.note,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+          {/* 标签用自身颜色显示，与表单里的选中态一致 —— 用户才能一眼认出"这条是那次出差" */}
+          {item.tags.map((name) => {
+            const tag = tagByName(name)
+            return (
+              <span
+                key={name}
+                className="shrink-0 rounded-full px-1.5 py-[1px] text-ab-caption2 font-medium"
+                style={
+                  tag
+                    ? {
+                        backgroundColor: `rgb(var(--ab-${tag.color}) / 0.14)`,
+                        color: `rgb(var(--ab-${tag.color}))`,
+                      }
+                    : undefined
+                }
+              >
+                {name}
+              </span>
+            )
+          })}
+          {item.project_name ? (
+            <span className="shrink-0 rounded-full bg-hairline/10 px-1.5 py-[1px] text-ab-caption2 text-label-2">
+              {item.project_name}
+            </span>
+          ) : null}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1">

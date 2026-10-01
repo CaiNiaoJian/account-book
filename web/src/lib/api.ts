@@ -263,6 +263,10 @@ export interface Transaction {
   note: string
   status: TransactionStatus | string
   tags: string[]
+  project_id: number | null
+  project_name: string
+  member_id: number | null
+  member_name: string
   splits: { id: number; category_id: number | null; amount_minor: number; note: string }[]
 }
 
@@ -290,6 +294,8 @@ export interface TransactionInput {
   project_id?: number | null
   member_id?: number | null
   splits?: Split[] | null
+  /** 标签 id 列表。传 `[]` 清空；省略表示不改动（更新时） */
+  tag_ids?: number[] | null
 }
 
 export interface TransactionFilter {
@@ -489,12 +495,25 @@ export const api = {
   tags: () => request<Tag[]>('/api/tags'),
   createTag: (payload: { name: string; color?: string; note?: string }) =>
     request<Tag>('/api/tags', { method: 'POST', body: JSON.stringify(payload) }),
+  updateTag: (id: number, changes: { name?: string; color?: string; note?: string }) =>
+    request<Tag>(`/api/tags/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
+  deleteTag: (id: number) => request<void>(`/api/tags/${id}`, { method: 'DELETE' }),
+
   projects: () => request<Project[]>('/api/projects'),
-  createProject: (payload: { name: string; color?: string; budget_minor?: number }) =>
+  createProject: (payload: { name: string; color?: string; budget_minor?: number; note?: string }) =>
     request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(payload) }),
+  updateProject: (
+    id: number,
+    changes: { name?: string; color?: string; status?: string; budget_minor?: number; note?: string },
+  ) => request<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
+  deleteProject: (id: number) => request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
+
   members: () => request<Member[]>('/api/members'),
-  createMember: (payload: { name: string; color?: string; is_self?: boolean }) =>
+  createMember: (payload: { name: string; color?: string; is_self?: boolean; note?: string }) =>
     request<Member>('/api/members', { method: 'POST', body: JSON.stringify(payload) }),
+  updateMember: (id: number, changes: { name?: string; color?: string; is_self?: boolean; note?: string }) =>
+    request<Member>(`/api/members/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
+  deleteMember: (id: number) => request<void>(`/api/members/${id}`, { method: 'DELETE' }),
 
   // ---- 统计 ----------------------------------------------------------------
   dashboard: (params: { reference?: string; trend_days?: number; recent_limit?: number } = {}) =>

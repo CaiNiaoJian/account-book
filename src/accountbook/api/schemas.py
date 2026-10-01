@@ -236,6 +236,8 @@ class TransactionCreate(RequestModel):
     member_id: int | None = None
     meta: dict[str, Any] = Field(default_factory=dict)
     splits: list[SplitIn] | None = None
+    #: 标签 id 列表。传 ``[]`` 表示不带标签；省略表示不改动（更新时）
+    tag_ids: list[int] | None = None
 
     @field_validator("amount_minor", mode="before")
     @classmethod
@@ -269,6 +271,8 @@ class TransactionUpdate(RequestModel):
     meta: dict[str, Any] | None = None
     #: 传 ``[]`` 清空分账；省略（None）表示不改动分账
     splits: list[SplitIn] | None = None
+    #: 传 ``[]`` 清空标签；省略（None）表示不改动标签
+    tag_ids: list[int] | None = None
 
 
 class TransactionOut(BaseModel):
@@ -290,6 +294,10 @@ class TransactionOut(BaseModel):
     note: str
     status: str
     tags: list[str] = Field(default_factory=list)
+    project_id: int | None = None
+    project_name: str = ""
+    member_id: int | None = None
+    member_name: str = ""
     splits: list[SplitOut] = Field(default_factory=list)
 
 

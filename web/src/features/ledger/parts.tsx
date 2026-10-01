@@ -14,7 +14,7 @@ import { usePreferences } from '@/app/preferences'
 import { ACCOUNT_ICON_GROUPS, CATEGORY_ICON_GROUPS } from '@/design/icons'
 import { useI18n } from '@/i18n'
 import { displayMinor, parseAmountToMinor } from '@/lib/format'
-import type { Category } from '@/lib/api'
+import { api, ApiError, type Category } from '@/lib/api'
 
 import { useLedger } from './store'
 
@@ -358,6 +358,127 @@ export function CategoryPicker({ value, onChange, kind, compact }: CategoryPicke
       {visible.length === 0 ? (
         <p className="px-2 py-1 text-ab-footnote text-label-3">{t('ledger.noCategory')}</p>
       ) : null}
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// 标签选择器
+// -----------------------------------------------------------------------------
+interface TagPickerProps {
+  /** 已选标签的 **id** 列表 */
+  value: number[]
+  onChange: (tagIds: number[]) => void
+  /** 允许在选标签时就地新建（记账时想到一个新维度是常态） */
+  allowCreate?: boolean
+  compact?: boolean
+}
+
+/**
+ * 标签选择器。
+ *
+ * 为什么支持"就地新建"：标签是**记账过程中才想起来的**维度
+ * （"这笔是出差"）。如果强制用户先跑去标签管理页建好再回来，
+ * 他大概率会放弃打标签 —— 一个用不起来的维度等于不存在。
+ *
+ * 选中态用标签自身的颜色填充，与列表里的展示保持一致。
+ */
+export function TagPicker({ value, onChange, allowCreate = true, compact }: TagPickerProps) {
+  const { t } = useI18n()
+  const { tags, refresh } = useLedger()
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const toggle = (tagId: number) => {
+    onChange(value.includes(tagId) ? value.filter((id) => id !== tagId) : [...value, tagId])
+  }
+
+  const create = async () => {
+    const name = draft.trim()
+    if (!name) return
+    setBusy(true)
+    setError(null)
+    try {
+      const created = await api.createTag({ name })
+      await refresh()
+      onChange([...value, created.id])
+      setDraft('')
+    } catch (cause) {
+      // 重名是最常见的失败（409）。给出明确提示，而不是让输入框默默清空
+      setError(
+        cause instanceof ApiError && cause.code === 'conflict' ? t('ledger.tagNameTaken') : String(cause),
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
+      <div className="flex flex-wrap gap-1.5">
+        {tags.length === 0 ? <span className="text-ab-footnote text-label-3">{t('ledger.noTags')}</span> : null}
+        {tags.map((tag) => {
+          const active = value.includes(tag.id)
+          return (
+            <button
+              key={tag.id}
+              type="button"
+              onClick={() => toggle(tag.id)}
+              aria-pressed={active}
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[3px] text-ab-footnote font-medium transition-all duration-150 ${
+                active ? '' : 'border-separator/70 text-label-2 hover:border-separator hover:text-label'
+              }`}
+              style={
+                active
+                  ? {
+                      backgroundColor: `rgb(var(--ab-${tag.color}) / 0.16)`,
+                      borderColor: `rgb(var(--ab-${tag.color}))`,
+                      color: `rgb(var(--ab-${tag.color}))`,
+                    }
+                  : undefined
+              }
+            >
+              {/* 未选中时用小圆点保留颜色线索：一排彩色标签会把界面搅乱，
+                  但完全去掉颜色又让人认不出自己建的那个 */}
+              {active ? null : (
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: `rgb(var(--ab-${tag.color}))` }}
+                />
+              )}
+              {tag.name}
+            </button>
+          )
+        })}
+      </div>
+
+      {allowCreate ? (
+        <div className="flex items-center gap-1.5">
+          <input
+            className="ab-input !w-40 !py-1 !text-ab-footnote"
+            value={draft}
+            placeholder={t('ledger.newTagPlaceholder')}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                void create()
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="ab-btn-secondary !py-1"
+            disabled={busy || !draft.trim()}
+            onClick={() => void create()}
+          >
+            <Icon name="plus" size={12} />
+            {t('ledger.addTag')}
+          </button>
+        </div>
+      ) : null}
+      {error ? <p className="text-ab-caption1 text-negative">{error}</p> : null}
     </div>
   )
 }

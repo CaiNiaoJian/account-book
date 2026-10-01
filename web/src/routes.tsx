@@ -25,6 +25,7 @@ import { CategoriesPage } from '@/pages/Categories'
 import { DashboardPage } from '@/pages/Dashboard'
 import { PlaceholderPage } from '@/pages/Placeholder'
 import { SettingsPage } from '@/pages/Settings'
+import { TagsProjectsPage } from '@/pages/TagsProjects'
 import { TransactionsPage } from '@/pages/Transactions'
 
 /** 已实现的页面（其余一律走占位页） */
@@ -34,6 +35,7 @@ const IMPLEMENTED_ROUTES: Record<string, ReactNode> = {
   '/quick-add': <TransactionsPage />,
   '/accounts': <AccountsPage />,
   '/categories': <CategoriesPage />,
+  '/tags': <TagsProjectsPage />,
   '/settings': <SettingsPage />,
   '/about': <AboutPage />,
 }

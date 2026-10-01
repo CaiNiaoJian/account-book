@@ -158,7 +158,14 @@ def _change_ratio(current: int, previous: int) -> float | None:
 
 
 def transaction_brief(transaction: Transaction) -> dict[str, Any]:
-    """流水的精简表示（列表 / 首页最近记录共用）。"""
+    """流水的精简表示（列表 / 首页最近记录共用）。
+
+    键名必须与 ``api/schemas.TransactionOut`` 的字段**完全一致**。
+    之前这里用的是 ``tag_names`` 而模型字段叫 ``tags``，Pydantic 于是套用了
+    默认值 —— 结果是标签在接口响应里永远是空数组，界面从不显示标签，
+    而数据库里其实存着。这类"字段名不一致导致静默丢数据"极难从现象反推，
+    因此字段名以响应模型为准，不再各自命名。
+    """
     return {
         "id": transaction.id,
         "type": transaction.type,
@@ -177,7 +184,11 @@ def transaction_brief(transaction: Transaction) -> dict[str, Any]:
         "category_name": transaction.category.name if transaction.category else "",
         "category_icon": transaction.category.icon if transaction.category else "",
         "category_color": transaction.category.color if transaction.category else "",
-        "tag_names": [tag.name for tag in transaction.tags],
+        "tags": [tag.name for tag in transaction.tags],
+        "project_id": transaction.project_id,
+        "project_name": transaction.project.name if transaction.project else "",
+        "member_id": transaction.member_id,
+        "member_name": transaction.member.name if transaction.member else "",
     }
 
 

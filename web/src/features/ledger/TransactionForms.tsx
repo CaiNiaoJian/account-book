@@ -24,7 +24,7 @@ import { api, ApiError, type Transaction, type TransactionType } from '@/lib/api
 import { localDayKey, parseAmountToMinor, displayMinor } from '@/lib/format'
 import { usePreferences } from '@/app/preferences'
 
-import { CategoryPicker, Modal } from './parts'
+import { CategoryPicker, Modal, TagPicker } from './parts'
 import { useLedger } from './store'
 
 /** 表单草稿：两种表单共用 */
@@ -39,6 +39,11 @@ export interface DraftState {
   payee: string
   note: string
   splits: { category_id: number | null; amount_minor: number }[]
+  /** 标签 id 列表 */
+  tagIds: number[]
+  /** 项目 / 成员（可空） */
+  projectId: number | null
+  memberId: number | null
 }
 
 const EMPTY_DRAFT: DraftState = {
@@ -51,6 +56,9 @@ const EMPTY_DRAFT: DraftState = {
   payee: '',
   note: '',
   splits: [],
+  tagIds: [],
+  projectId: null,
+  memberId: null,
 }
 
 /** 从已有流水构造草稿（编辑模式） */
@@ -68,6 +76,12 @@ export function draftFrom(transaction: Transaction): DraftState {
       category_id: split.category_id,
       amount_minor: split.amount_minor,
     })),
+    // 接口只回传标签**名字**（列表展示用），而提交需要 id。
+    // 这里通过名字反查 id —— 与其让接口同时回传两种形态，
+    // 不如让"名字 → id"的映射只在需要编辑的地方做一次。
+    tagIds: [],
+    projectId: transaction.project_id ?? null,
+    memberId: transaction.member_id ?? null,
   }
 }
 
@@ -86,7 +100,12 @@ function toPayload(draft: DraftState, keepTime?: string) {
     amount_minor: draft.amountMinor as number,
     payee: draft.payee,
     note: draft.note,
-    splits: draft.splits.length > 0 ? draft.splits : null,
+    splits: draft.splits.length > 0 ? draft.splits : [],
+    // 标签在两种表单里都可选，因此始终显式提交：
+    // 传空数组表示"清空"，这样用户把标签全部取消的操作才真的生效
+    tag_ids: draft.tagIds,
+    project_id: draft.projectId,
+    member_id: draft.memberId,
   }
 }
 
@@ -97,10 +116,23 @@ function toPayload(draft: DraftState, keepTime?: string) {
  * 这条 —— 侧边栏提示、保存按钮禁用、提交前的最终校验都引用同一个判断。
  */
 export function useTransactionDraft(initial?: Transaction) {
-  const { accounts } = useLedger()
+  const { accounts, tags } = useLedger()
   const [draft, setDraft] = useState<DraftState>(initial ? draftFrom(initial) : EMPTY_DRAFT)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // 编辑已有流水时把标签**名字**还原成 id。
+  // 接口在列表里只回传名字（展示用），而提交需要 id；
+  // 这个映射只在"进入编辑"时做一次，所以放在这里而不是让接口回传两套字段。
+  useEffect(() => {
+    if (!initial || tags.length === 0) return
+    const ids = initial.tags
+      .map((name) => tags.find((tag) => tag.name === name)?.id)
+      .filter((id): id is number => typeof id === 'number')
+    setDraft((previous) => (previous.tagIds.length > 0 ? previous : { ...previous, tagIds: ids }))
+    // 只在标签字典首次就绪时补齐，之后不再干预用户选择
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial?.id, tags.length])
 
   // 默认账户：优先用户上次使用的（P1 先用第一个未归档账户）
   useEffect(() => {
@@ -375,6 +407,18 @@ export function QuickAddDialog({ open, onClose, onSaved }: QuickAddDialogProps) 
           </div>
         </div>
 
+        {/* 快捷记账也允许打标签：标签的价值恰恰在于"记账当下顺手记下来"。
+            若只有详细填表能打标签，绝大多数流水永远不会带标签 ——
+            那么标签这个维度就等于没有。 */}
+        <div>
+          <span className="ab-field-label">{t('ledger.tags')}</span>
+          <TagPicker
+            compact
+            value={draft.tagIds}
+            onChange={(tagIds) => setDraft((previous) => ({ ...previous, tagIds }))}
+          />
+        </div>
+
         {error ? (
           <div className="rounded-ab-sm bg-negative/10 px-3 py-2 text-ab-footnote text-negative">{error}</div>
         ) : null}
@@ -404,7 +448,7 @@ export function TransactionEditor({
   withSplits,
 }: TransactionEditorProps) {
   const { t } = useI18n()
-  const { accounts } = useLedger()
+  const { accounts, projects, members } = useLedger()
   const controller = useTransactionDraft(transaction ?? undefined)
   const { draft, setDraft, busy, error, canSubmit, splitsValid, splitTotal, submit } = controller
   const [splitMode, setSplitMode] = useState(false)
@@ -678,6 +722,70 @@ export function TransactionEditor({
             />
           </div>
         </div>
+
+        {/* 标签 / 项目 / 成员：横向维度，都是可选的 */}
+        <div>
+          <span className="ab-field-label">{t('ledger.tags')}</span>
+          <TagPicker
+            value={draft.tagIds}
+            onChange={(tagIds) => setDraft((previous) => ({ ...previous, tagIds }))}
+          />
+        </div>
+
+        {projects.length > 0 || members.length > 0 ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {projects.length > 0 ? (
+              <div>
+                <label className="ab-field-label" htmlFor="editor-project">
+                  {t('ledger.project')}
+                </label>
+                <select
+                  id="editor-project"
+                  className="ab-select"
+                  value={draft.projectId ?? ''}
+                  onChange={(event) =>
+                    setDraft((previous) => ({
+                      ...previous,
+                      projectId: event.target.value ? Number(event.target.value) : null,
+                    }))
+                  }
+                >
+                  <option value="">{t('ledger.noProject')}</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+            {members.length > 0 ? (
+              <div>
+                <label className="ab-field-label" htmlFor="editor-member">
+                  {t('ledger.member')}
+                </label>
+                <select
+                  id="editor-member"
+                  className="ab-select"
+                  value={draft.memberId ?? ''}
+                  onChange={(event) =>
+                    setDraft((previous) => ({
+                      ...previous,
+                      memberId: event.target.value ? Number(event.target.value) : null,
+                    }))
+                  }
+                >
+                  <option value="">{t('ledger.noMember')}</option>
+                  {members.map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.is_self ? `${member.name}（${t('ledger.self')}）` : member.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </Modal>
   )

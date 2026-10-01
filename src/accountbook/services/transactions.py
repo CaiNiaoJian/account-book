@@ -241,9 +241,13 @@ def list_transactions(session: Session, query: TransactionQuery) -> tuple[list[T
 # 写入
 # -----------------------------------------------------------------------------
 def create_transaction(
-    session: Session, *, splits: list[dict[str, Any]] | None = None, **fields: Any
+    session: Session,
+    *,
+    splits: list[dict[str, Any]] | None = None,
+    tag_ids: list[int] | None = None,
+    **fields: Any,
 ) -> Transaction:
-    """创建流水（可选带分账）。"""
+    """创建流水（可选带分账与标签）。"""
     unknown = set(fields) - TRANSACTION_MUTABLE_FIELDS
     if unknown:
         raise ValidationError(f"不支持的流水字段：{sorted(unknown)}", fields=sorted(unknown))
@@ -255,6 +259,10 @@ def create_transaction(
 
     if splits:
         _replace_splits(session, transaction, splits)
+        session.flush()
+
+    if tag_ids:
+        _replace_tags(session, transaction, tag_ids)
         session.flush()
 
     audit.record(
@@ -276,9 +284,15 @@ def update_transaction(
     transaction_id: int,
     *,
     splits: list[dict[str, Any]] | None = None,
+    tag_ids: list[int] | None = None,
     **changes: Any,
 ) -> Transaction:
-    """更新流水。``splits`` 传 ``[]`` 表示清空分账；传 ``None`` 表示不动分账。"""
+    """更新流水。
+
+    ``splits`` / ``tag_ids`` 的语义一致：传 ``[]`` 表示**清空**，传 ``None`` 表示**不动**。
+    这个区分是必要的 —— 否则"把标签全删掉"这个操作没法表达，
+    用户只能删掉整笔流水重记。
+    """
     unknown = set(changes) - TRANSACTION_MUTABLE_FIELDS
     if unknown:
         raise ValidationError(f"不支持的流水字段：{sorted(unknown)}", fields=sorted(unknown))
@@ -293,6 +307,10 @@ def update_transaction(
 
     if splits is not None:
         _replace_splits(session, transaction, splits)
+        session.flush()
+
+    if tag_ids is not None:
+        _replace_tags(session, transaction, tag_ids)
         session.flush()
 
     audit.record_diff(
@@ -421,6 +439,27 @@ def _normalize_fields(
         normalized["external_id"] = None
 
     return normalized
+
+
+def _replace_tags(session: Session, transaction: Transaction, tag_ids: list[int]) -> None:
+    """整体替换流水的标签。
+
+    为什么要像分账一样"先完整校验、再改动状态"：
+    传入的 id 里只要有一个不存在，就应该整笔操作失败，
+    而不是"部分标签挂上了、部分没挂" —— 后者会让用户以为全部成功。
+    """
+    unique_ids = list(dict.fromkeys(int(item) for item in tag_ids))
+    tags: list[Tag] = []
+    for tag_id in unique_ids:
+        tag = session.get(Tag, tag_id)
+        if tag is None or tag.deleted_at is not None:
+            raise NotFoundError("标签不存在或已被删除", entity="tag", entity_id=tag_id)
+        tags.append(tag)
+
+    # 原地替换内容而不是重新赋值：relationship 已被 selectin 加载，
+    # 整体赋值在 SQLAlchemy 里会触发一次额外的 delete+insert，语义也更绕
+    transaction.tags[:] = tags
+    session.flush()
 
 
 def _require_account(session: Session, account_id: int) -> Account:
