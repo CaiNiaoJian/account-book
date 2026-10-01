@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { Icon } from '@/components/Icon'
 import { Chart } from '@/components/Chart'
@@ -1133,6 +1134,10 @@ export function DebtsPage() {
   const [paying, setPaying] = useState<DebtStatus | null>(null)
   const [planFor, setPlanFor] = useState<DebtStatus | null>(null)
   const [plan, setPlan] = useState<RepaymentPlan | null>(null)
+  // `?plan=<id>` 直接打开某笔债务的还款计划。与日历的 `?day=` 同一个理由：
+  // 让"某笔债务的计划"成为可分享、可加书签的链接。
+  const [searchParams, setSearchParams] = useSearchParams()
+  const planParam = searchParams.get('plan')
   const [busy, setBusy] = useState(false)
 
   const [form, setForm] = useState({
@@ -1165,6 +1170,25 @@ export function DebtsPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // 深链：列表就绪后打开对应的那笔债务
+  useEffect(() => {
+    if (!planParam || planFor !== null || !data) return
+    const target = data.items.find((item) => String(item.id) === planParam)
+    if (!target) return
+    setPlanFor(target)
+    void api.debtPlan(target.id).then(setPlan).catch(() => setPlan(null))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planParam, data])
+
+  const closePlan = useCallback(() => {
+    setPlanFor(null)
+    setPlan(null)
+    // 一并清掉 URL 参数，否则刷新后又弹出来
+    searchParams.delete('plan')
+    setSearchParams(searchParams, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, setSearchParams])
 
   const submit = async () => {
     setBusy(true)
@@ -1550,19 +1574,9 @@ export function DebtsPage() {
         open={planFor !== null}
         title={t('debts.planTitle', { name: planFor?.name ?? '' })}
         size="lg"
-        onClose={() => {
-          setPlanFor(null)
-          setPlan(null)
-        }}
+        onClose={closePlan}
         footer={
-          <button
-            type="button"
-            className="ab-btn-secondary"
-            onClick={() => {
-              setPlanFor(null)
-              setPlan(null)
-            }}
-          >
+          <button type="button" className="ab-btn-secondary" onClick={closePlan}>
             {t('common.close')}
           </button>
         }
