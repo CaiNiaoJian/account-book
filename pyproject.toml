@@ -49,6 +49,7 @@ dependencies = [
     "pywebview>=5.3; sys_platform == 'win32'",
     "pythonnet>=3.0; sys_platform == 'win32'",
     "pystray>=0.19; sys_platform == 'win32'",
+"reportlab>=4.0",                # P5 报告导出：内置 CID 中文字体，不需要附带字体文件
     "pillow>=10.0",
 ]
 
