@@ -30,10 +30,31 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from .. import APP_ID, APP_NAME, APP_NAME_EN, BUILD_PHASE, __version__
 from ..core.security import COOKIE_NAME, is_loopback_host, origin_allowed
+from .deps import register_domain_error_handler
+from .routes import accounts as accounts_routes
+from .routes import categories as categories_routes
+from .routes import meta as meta_routes
+from .routes import stats as stats_routes
 from .routes import system as system_routes
+from .routes import taxonomy as taxonomy_routes
+from .routes import transactions as transactions_routes
 from .state import AppContext, context_of
 
-__all__ = ["create_app"]
+__all__ = ["U8JSONResponse", "create_app"]
+
+
+class U8JSONResponse(JSONResponse):
+    """显式声明 UTF-8 的 JSON 响应。
+
+    背景：FastAPI 默认只发 ``application/json``（不带 charset）。
+    按 RFC 8259 这应当被理解为 UTF-8，但 Windows PowerShell 5.1 的
+    ``Invoke-RestMethod`` 以及部分老库会退回 Latin-1 解码 —— 实测结果是
+    所有中文变成乱码，"按分类名查找"这类操作全部落空，
+    看起来像接口返回了错数据。显式声明 charset 成本为零，却消除一整类故障。
+    """
+
+    media_type = "application/json; charset=utf-8"
+
 
 _logger = logging.getLogger(__name__)
 
@@ -115,11 +136,20 @@ def create_app(ctx: AppContext) -> FastAPI:
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        # 所有 JSON 响应显式声明 UTF-8。
+        # 背景：FastAPI 默认只发 ``application/json``（不带 charset），
+        # 而按 RFC 只应视为 UTF-8；但 Windows PowerShell 5.1 的
+        # Invoke-RestMethod / 部分老库会退回 Latin-1 解码，于是所有中文变成乱码
+        # （实测：中文分类名比对全部失败，像是接口返回了错数据）。
+        # 显式声明 charset 成本为零，却能消除一整类"乱码"故障。
+        default_response_class=U8JSONResponse,
     )
     app.state.ctx = ctx
 
     _install_guard(app)
     _install_error_handlers(app)
+    # 领域异常 → HTTP 的统一映射（服务层只抛 DomainError，不认识 HTTP）
+    register_domain_error_handler(app)
 
     # ---- 探活 ---------------------------------------------------------------
     @app.get("/health", include_in_schema=False)
@@ -129,6 +159,12 @@ def create_app(ctx: AppContext) -> FastAPI:
 
     # ---- 业务路由 -----------------------------------------------------------
     app.include_router(system_routes.router)
+    app.include_router(meta_routes.router)
+    app.include_router(accounts_routes.router)
+    app.include_router(categories_routes.router)
+    app.include_router(transactions_routes.router)
+    app.include_router(taxonomy_routes.router)
+    app.include_router(stats_routes.router)
 
     # ---- 前端托管（必须最后注册，因为它是通配路由） -------------------------
     @app.get("/{full_path:path}", include_in_schema=False)
@@ -151,7 +187,7 @@ def _install_guard(app: FastAPI) -> None:
         # ---- 关卡 1：Host 必须是环回地址 ------------------------------------
         if not is_loopback_host(request.headers.get("host")):
             _logger.warning("拒绝非环回 Host 请求：%r", request.headers.get("host"))
-            return JSONResponse(
+            return U8JSONResponse(
                 {"detail": "仅允许通过本机环回地址访问"},
                 status_code=403,
             )
@@ -160,7 +196,7 @@ def _install_guard(app: FastAPI) -> None:
         origin = request.headers.get("origin") or request.headers.get("referer")
         if not origin_allowed(origin, ctx.origin_whitelist):
             _logger.warning("拒绝非白名单来源请求：%r", origin)
-            return JSONResponse({"detail": "请求来源不被允许"}, status_code=403)
+            return U8JSONResponse({"detail": "请求来源不被允许"}, status_code=403)
 
         # ---- 关卡 3：令牌 ---------------------------------------------------
         path = request.url.path
@@ -225,7 +261,7 @@ def _unauthorized(path: str) -> Response:
       （正常使用不会走到这里，因为桌面外壳总会带上令牌）。
     """
     if path.startswith("/api/"):
-        return JSONResponse({"detail": "会话令牌无效或已过期，请重新启动应用"}, status_code=401)
+        return U8JSONResponse({"detail": "会话令牌无效或已过期，请重新启动应用"}, status_code=401)
     html = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>{APP_NAME} · 需要从应用启动</title>
 <style>:root{{color-scheme:light dark}}body{{margin:0;min-height:100vh;display:flex;
@@ -254,7 +290,7 @@ def _install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def unhandled(request: Request, exc: Exception) -> Response:  # pragma: no cover
         _logger.exception("接口未处理异常：%s %s", request.method, request.url.path)
-        return JSONResponse(
+        return U8JSONResponse(
             {"detail": "服务内部错误，详情已写入日志", "error": type(exc).__name__},
             status_code=500,
         )

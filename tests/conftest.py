@@ -22,6 +22,8 @@ from fastapi.testclient import TestClient
 from accountbook.api.server import create_app
 from accountbook.api.state import create_context
 from accountbook.config import RuntimeSettings, build_config_store
+from accountbook.db.bootstrap import bootstrap_database
+from accountbook.db.session import Database
 from accountbook.paths import AppPaths, get_paths, reset_paths_cache
 
 #: 测试中使用的固定环回端口（仅用于构造 Origin / base_url，不实际监听）
@@ -81,13 +83,25 @@ def client(app_paths: AppPaths, settings: RuntimeSettings) -> Iterator[tuple[Tes
 
     产出 ``(client, ctx)``：多数用例需要 ``ctx.token`` 来构造合法请求。
     ``base_url`` 必须是环回地址，否则会被 Host 守卫拒绝——这正是我们要验证的行为之一。
+
+    这里**顺带把数据库准备好**（迁移 + 内置数据），与生产启动流程保持一致：
+    如果测试里手工建表，就永远测不到"迁移链能否在新库上跑通"这件事 ——
+    而那恰恰是最需要在每次改动后验证的部分。
     """
     config = build_config_store(app_paths)
     ctx = create_context(paths=app_paths, settings=settings, config=config)
     ctx.port = TEST_PORT
+
+    database = Database(app_paths.database)
+    bootstrap_database(database)
+    ctx.database = database
+
     app = create_app(ctx)
-    with TestClient(app, base_url=f"http://127.0.0.1:{TEST_PORT}") as test_client:
-        yield test_client, ctx
+    try:
+        with TestClient(app, base_url=f"http://127.0.0.1:{TEST_PORT}") as test_client:
+            yield test_client, ctx
+    finally:
+        database.dispose()
 
 
 @pytest.fixture

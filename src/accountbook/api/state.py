@@ -69,6 +69,10 @@ class AppContext:
     #: 选定的 .NET 运行时（``netfx`` / ``coreclr`` / ``None``）
     clr_runtime: str | None = None
 
+    #: 数据库实例。由 app.run() 在迁移完成后注入；
+    #: 为 ``None`` 时任何数据接口都应返回 503，而不是抛出难以理解的 AttributeError。
+    database: Any = None
+
     #: 后端线程退出信号。uvicorn 通过它优雅停机。
     shutdown_event: threading.Event = field(default_factory=threading.Event)
 

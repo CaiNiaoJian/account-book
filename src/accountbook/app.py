@@ -35,6 +35,8 @@ from .api.state import AppContext, create_context
 from .config import RuntimeSettings, build_config_store
 from .core.security import mask_token_in_url
 from .core.single_instance import InstanceLock
+from .db.bootstrap import bootstrap_database
+from .db.session import Database
 from .logging_setup import install_excepthook, setup_logging
 from .paths import AppPaths, get_paths
 from .shell.tray import TrayHandle, create_tray
@@ -58,6 +60,8 @@ class _Shutdown:
     lock: InstanceLock | None = None
     server: BackendServer | None = None
     tray: TrayHandle | None = None
+    #: 数据库连接池 —— 退出前必须 dispose，否则 WAL 文件不能被正确收尾
+    database: Database | None = None
 
 
 class BackendServer:
@@ -212,8 +216,21 @@ def run() -> int:
             prefs.privacy_mode,
         )
 
-        # ---- 5. 后端 --------------------------------------------------------
+        # ---- 5. 数据库：建库 → 迁移 → 内置数据 ------------------------------
+        # 顺序很关键：必须先让数据库就绪，再启动 HTTP 服务 ——
+        # 否则服务已开始接受请求，而数据接口还可能面对一个尚未建表的库。
         ctx = create_context(paths=paths, settings=settings, config=config)
+        try:
+            database = Database(paths.database)
+            bootstrap_database(database)
+        except Exception as exc:
+            _logger.exception("数据库初始化失败")
+            _report_database_failure(paths, exc)
+            return 3
+        ctx.database = database
+        shutdown.database = database
+
+        # ---- 6. 后端 --------------------------------------------------------
         server = BackendServer(ctx, settings)
         shutdown.server = server
         ctx.port = server.start()
@@ -221,7 +238,7 @@ def run() -> int:
         url = _build_entry_url(ctx, settings)
         _logger.info("界面入口：%s", _mask_token(url))
 
-        # ---- 6a. 仅服务模式：不建窗口，只保持本地服务运行 -------------------
+        # ---- 7a. 仅服务模式：不建窗口，只保持本地服务运行 -------------------
         # 用途：端到端测试与截图验证、无桌面会话的环境、
         # 以及偏好用自己浏览器的用户。此时进程靠 Ctrl+C 或停机信号结束。
         if settings.serve_only:
@@ -285,6 +302,10 @@ def run() -> int:
             shutdown.tray.stop()
         if shutdown.server is not None:
             shutdown.server.stop()
+        if shutdown.database is not None:
+            # 关闭连接池：让 SQLite 把 WAL 合并回主库并释放文件句柄。
+            # 不关的话，便携模式下用户直接拔 U 盘可能留下 -wal/-shm 残留文件。
+            shutdown.database.dispose()
         if shutdown.lock is not None:
             shutdown.lock.release()
         _logger.info("已退出")
@@ -352,6 +373,29 @@ def _emit(text: str) -> None:
     with contextlib.suppress(OSError, ValueError, AttributeError):
         # 管道已关闭 / 无控制台等情况：放弃输出，不影响主流程
         print(text, flush=True)
+
+
+def _report_database_failure(paths: AppPaths, exc: Exception) -> None:
+    """数据库初始化失败时的可读提示。
+
+    常见原因：
+        * 磁盘空间不足或文件被占用（另一个进程正在读写同一个账本）；
+        * 账本文件被同步盘（OneDrive 等）锁定 —— 这是本地数据库常见的坑；
+        * 文件权限不足（安装目录只读）。
+    """
+    message = (
+        f"无法打开或初始化账本数据库，程序已停止启动。\n\n"
+        f"数据库文件：{paths.database}\n"
+        f"数据目录：{paths.data}\n"
+        f"错误信息：{exc}\n\n"
+        "可以尝试：\n"
+        "  1) 确认没有其它程序（含另一个 AccountBook 窗口）正在使用该文件；\n"
+        "  2) 若账本位于 OneDrive / 坚果云等同步目录，请先暂停同步再试；\n"
+        "  3) 检查磁盘剩余空间与文件权限。\n\n"
+        "账本本身不会被删除；修复后重新启动即可。"
+    )
+    _emit(message)
+    _show_message_box(message, title=APP_NAME_EN)
 
 
 def _report_data_dir_unusable(paths: AppPaths, exc: OSError) -> None:

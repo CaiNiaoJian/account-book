@@ -113,6 +113,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]  # 测试中允许 assert
+# B008：FastAPI 的依赖注入**必须**把 Query()/Depends() 写在默认值里 ——
+# 这是框架规定的写法，不是"函数调用写在默认值"的陷阱。
+# 在路由模块里豁免它，而不是在每个参数后挂一行 noqa（后者会淹没真正的告警）。
+"src/accountbook/api/routes/*.py" = ["B008"]
 
 [tool.ruff.format]
 quote-style = "double"
