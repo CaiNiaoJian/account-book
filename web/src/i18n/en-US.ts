@@ -729,6 +729,10 @@ export const enUS = {
     compareCurrent: 'Current range',
     tableTitle: 'Bar by bar',
     colPeriod: 'Period',
+    downsampled: 'Range too long — showing {actual} instead of {requested} (max {max} bars). Nothing was sampled away: every candle is still a real aggregate, just at lower resolution.',
+    brushHint: 'You can also drag on the chart above to select a stretch, then compare it with the equally long stretch right before it.',
+    brushClear: 'Clear selection ({count} bars)',
+    comparePrevious: 'Previous stretch',
   },
   metrics: {
     loadFailed: 'Could not load indicator parameters',

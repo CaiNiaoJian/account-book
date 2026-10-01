@@ -29,6 +29,7 @@ import {
   TreemapChart,
 } from 'echarts/charts'
 import {
+  BrushComponent,
   DataZoomComponent,
   DatasetComponent,
   GridComponent,
@@ -37,6 +38,7 @@ import {
   MarkPointComponent,
   RadarComponent,
   TitleComponent,
+  ToolboxComponent,
   TooltipComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -48,7 +50,9 @@ import { chartPalette, resolveToken } from '@/design/tokens'
 // 只注册用到的图表与组件：ECharts 全量引入会让分包从 ~580KB 涨到 1MB+，
 // 而这里每种图表都对应界面上一个具体位置，多注册一种就该多一个用途。
 echarts.use([
-  BarChart,
+  BrushComponent,
+  BarChart,  // 注意：BrushComponent 加在下面的组件段里
+
   BoxplotChart,
   CandlestickChart,
   GaugeChart,
@@ -67,6 +71,7 @@ echarts.use([
   MarkPointComponent,
   RadarComponent,
   TitleComponent,
+  ToolboxComponent,
   TooltipComponent,
   CanvasRenderer,
 ])
@@ -117,6 +122,9 @@ function buildTheme(): Record<string, unknown> {
   }
 }
 
+/** ECharts 实例。导出给需要 `dispatchAction` 的页面用（例如清空框选高亮） */
+export type ChartInstance = echarts.ECharts
+
 export interface ChartProps {
   /** ECharts option（每次变化都会 setOption，默认不合并以支持切换图表类型） */
   option: echarts.EChartsCoreOption
@@ -125,6 +133,14 @@ export interface ChartProps {
   /** 数据为空时的占位文案 */
   emptyLabel?: string
   onEvents?: Record<string, (params: unknown) => void>
+  /**
+   * 实例就绪回调。
+   *
+   * 有些交互（例如**清空框选**）只能靠 `dispatchAction` 完成 ——
+   * 光把 state 置空，图上那块高亮还留着，用户会以为"点了没反应"。
+   * ECharts 的 brush 状态在实例内部，React 的 state 管不到它。
+   */
+  onReady?: (instance: ChartInstance) => void
 }
 
 /**
@@ -135,7 +151,7 @@ export interface ChartProps {
  *   2. **主题切换**必须重建实例 —— ECharts 的主题在初始化时固化；
  *   3. **组件卸载**必须 dispose，否则切页几次就泄漏一批 canvas。
  */
-export function Chart({ option, height = 240, className, emptyLabel, onEvents }: ChartProps) {
+export function Chart({ option, height = 240, className, emptyLabel, onEvents, onReady }: ChartProps) {
   const theme = useTheme()
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
@@ -151,11 +167,15 @@ export function Chart({ option, height = 240, className, emptyLabel, onEvents }:
     const observer = new ResizeObserver(() => instance.resize())
     observer.observe(container)
 
+    onReady?.(instance)
+
     return () => {
       observer.disconnect()
       instance.dispose()
       chartRef.current = null
     }
+    // onReady 只在实例就绪时用一次；把它放进依赖会让父组件每次渲染都重建实例
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme])
 
   useEffect(() => {

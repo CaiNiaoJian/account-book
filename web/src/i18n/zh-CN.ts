@@ -713,6 +713,10 @@ export const zhCN = {
     compareCurrent: '当前区间',
     tableTitle: '逐根明细',
     colPeriod: '周期',
+    downsampled: '区间过长，已自动从{requested}降为{actual}显示（一次最多 {max} 根）。没有抽稀：每根蜡烛仍是真实的聚合结果，只是分辨率降低了。',
+    brushHint: '也可以在上方主图上按住拖动框选一段区间，再与紧挨着它之前的等长一段对比。',
+    brushClear: '清除框选（{count} 根）',
+    comparePrevious: '上一段',
   },
   metrics: {
     loadFailed: '指标参数加载失败',

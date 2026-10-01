@@ -51,9 +51,12 @@ def kline(
     resolved_start = start or (resolved_end - timedelta(days=DEFAULT_SPAN_DAYS[period]))
     if resolved_end < resolved_start:
         raise ValidationError("结束日期不能早于起始日期", field="end")
-    # 日线一次最多 5 年：再长的话图上会有 1800+ 根蜡烛，既看不清也拖慢渲染
-    if period == KlinePeriod.DAY.value and (resolved_end - resolved_start).days > 365 * 5:
-        raise ValidationError("日线一次最多查询 5 年", field="end", max_days=365 * 5)
+    # 长区间**不再拒绝**，而是由服务层自动换更粗的周期（见 services/kline.py
+    # 的 MAX_BARS）。原来硬性拒绝日线超过 5 年 —— 那会挡掉本可以服务的请求，
+    # 而"蜡烛太密看不清"完全可以用降级解决，不该变成一个错误。
+    # 这里只兜底一个荒谬的上限，避免有人查询公元 1000 年至今。
+    if (resolved_end - resolved_start).days > 365 * 100:
+        raise ValidationError("一次最多查询 100 年", field="end", max_days=365 * 100)
 
     return kline_service.series(
         session,

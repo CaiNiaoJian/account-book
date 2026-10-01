@@ -13,9 +13,9 @@
  *    而不是让用户在两页之间来回记忆。
  */
 
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { Chart } from '@/components/Chart'
+import { Chart, type ChartInstance } from '@/components/Chart'
 import { Icon } from '@/components/Icon'
 import { Card, EmptyState, Kbd, Skeleton } from '@/components/ui'
 import { useI18n } from '@/i18n'
@@ -24,7 +24,6 @@ import { displayMinor, formatDayLabel } from '@/lib/format'
 import { moneyColors, resolveToken } from '@/design/tokens'
 import { usePreferences, useTheme } from '@/app/preferences'
 
-import { useCallback, useEffect } from 'react'
 
 const PERIODS: KlinePeriod[] = ['day', 'week', 'month', 'year']
 
@@ -47,6 +46,14 @@ export function KlinePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [compareStart, setCompareStart] = useState<string | null>(null)
+  /**
+   * 框选出来的区间（分类轴下标）。
+   *
+   * 与"等长两段"的默认对比**共存**：框选回答"我想比这两段"，
+   * 默认对比回答"趋势有没有变" —— 两条路解决的是不同的问题。
+   */
+  const [brushRange, setBrushRange] = useState<{ from: number; to: number } | null>(null)
+  const chartRef = useRef<ChartInstance | null>(null)
   // 事件打点：图表上的"为什么这天净值跳了"往往要到事件日志里才找得到答案，
   // 把它直接标在蜡烛上，看图的人就不用再切页面
   const [events, setEvents] = useState<{ date: string; kind: string; title: string }[]>([])
@@ -66,6 +73,33 @@ export function KlinePage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  /**
+   * 框选结束：记下分类轴上的下标范围。
+   *
+   * ECharts 的 `coordRange` 在分类轴上给的是**下标**而不是日期；
+   * 用户也可能从右往左拖，因此正序倒序都要接受。
+   */
+  const onBrushEnd = useCallback((params: unknown) => {
+    const areas = (params as { areas?: { coordRange?: unknown }[] } | undefined)?.areas ?? []
+    const range = areas[0]?.coordRange
+    if (!Array.isArray(range) || range.length < 2) {
+      setBrushRange(null)
+      return
+    }
+    const [a = 0, b = 0] = range.map((value) => Math.round(Number(value)))
+    if (!Number.isFinite(a) || !Number.isFinite(b)) {
+      setBrushRange(null)
+      return
+    }
+    setBrushRange({ from: Math.min(a, b), to: Math.max(a, b) })
+  }, [])
+
+  /** 清空框选：必须同时清 state 与图上的高亮，否则看起来像"点了没反应" */
+  const clearBrush = useCallback(() => {
+    setBrushRange(null)
+    chartRef.current?.dispatchAction({ type: 'brush', areas: [] })
+  }, [])
 
   // 事件的区间取决于后端实际返回的 start/end（而不是本地猜一个），
   // 这样降采样或补数据之后打点仍然落在正确的蜡烛上
@@ -200,6 +234,21 @@ export function KlinePage() {
         { type: 'inside', start: 0, end: 100 },
         { type: 'slider', height: 16, bottom: 2, start: 0, end: 100 },
       ],
+      // 只允许横轴框选：纵轴框选对"比较两段时间"没有意义
+      brush: {
+        xAxisIndex: 0,
+        brushMode: 'single',
+        brushType: 'lineX',
+        transformable: false,
+        throttleType: 'debounce',
+        throttleDelay: 300,
+      },
+      toolbox: {
+        right: 8,
+        top: 0,
+        itemSize: 12,
+        feature: { brush: { type: ['lineX', 'clear'] } },
+      },
       grid: { left: 6, right: 14, top: 30, bottom: 40, containLabel: true },
     }
   }, [bars, data, t, trend])
@@ -362,28 +411,59 @@ export function KlinePage() {
    * 两条线回答的是"哪一段涨得更好"。
    */
   const compareOption = useMemo(() => {
-    if (!compareStart) return null
     const normalized = (values: number[]) => {
       const base = values[0] ?? 0
       return values.map((value) => (base === 0 ? 0 : ((value - base) / Math.abs(base)) * 100))
     }
+
+    let current: number[]
+    let previous: number[] | null = null
+
+    if (brushRange) {
+      // 框选模式：选中的这段 vs **紧挨着它之前的等长一段**
+      current = bars.slice(brushRange.from, brushRange.to + 1).map((bar) => bar.close_minor)
+      const previousStart = brushRange.from - current.length
+      if (previousStart >= 0) {
+        previous = bars.slice(previousStart, brushRange.from).map((bar) => bar.close_minor)
+      }
+    } else if (compareStart) {
+      const half = Math.floor(bars.length / 2)
+      previous = bars.slice(0, half).map((bar) => bar.close_minor)
+      current = bars.slice(half).map((bar) => bar.close_minor)
+    } else {
+      return null
+    }
+    if (current.length === 0) return null
+
+    const series: { name: string; type: 'line'; data: number[]; symbol: 'none'; smooth: boolean }[] = [
+      {
+        name: t('kline.compareCurrent'),
+        type: 'line',
+        data: normalized(current),
+        symbol: 'none',
+        smooth: true,
+      },
+    ]
+    if (previous) {
+      series.push({
+        name: t('kline.comparePrevious'),
+        type: 'line',
+        data: normalized(previous),
+        symbol: 'none',
+        smooth: true,
+      })
+    }
+
     return {
       legend: { top: 0 },
-      series: [
-        {
-          name: t('kline.compareCurrent'),
-          type: 'line',
-          data: normalized(bars.map((bar) => bar.close_minor)),
-          symbol: 'none',
-          smooth: true,
-        },
-      ],
-      xAxis: { type: 'category', data: bars.map((_, index) => `${index + 1}`) },
+      series,
+      // 横轴用**根序号**而不是日期：两段的日期不同，只有"第几根"是可对齐的
+      xAxis: { type: 'category', data: current.map((_, index) => `${index + 1}`) },
       yAxis: { type: 'value', axisLabel: { formatter: '{value}%' } },
       grid: { left: 6, right: 14, top: 26, bottom: 4, containLabel: true },
       tooltip: { trigger: 'axis', valueFormatter: (value: number) => `${Number(value).toFixed(2)}%` },
     }
-  }, [bars, compareStart, t])
+  }, [bars, brushRange, compareStart, t])
 
   const summary = useMemo(() => {
     const first = bars[0]
@@ -492,8 +572,25 @@ export function KlinePage() {
           ) : null}
 
           <Card title={t('kline.candleTitle')}>
-            <Chart option={candleOption} height={340} />
+            <Chart
+              option={candleOption}
+              height={340}
+              onEvents={{ brushEnd: onBrushEnd }}
+              onReady={(instance) => {
+                chartRef.current = instance
+              }}
+            />
             <p className="mt-1 text-ab-caption1 text-label-3">{t('kline.candleHint')}</p>
+            {/* 降级必须明说：否则用户会以为自己在看日线 */}
+            {data?.downsampled ? (
+              <p className="mt-1 rounded-ab-sm bg-warning/10 px-3 py-2 text-ab-caption1 text-label-2">
+                {t('kline.downsampled', {
+                  requested: t(`kline.period.${data.requested_period}`),
+                  actual: t(`kline.period.${data.period}`),
+                  max: data.max_bars,
+                })}
+              </p>
+            ) : null}
           </Card>
 
           <Card title={t('kline.volume')}>
@@ -521,15 +618,29 @@ export function KlinePage() {
           <Card
             title={t('kline.compareTitle')}
             action={
-              <button
-                type="button"
-                className="ab-chip"
-                data-active={compareStart !== null}
-                onClick={() => setCompareStart(compareStart ? null : bars[0]?.period_start ?? null)}
-              >
-                <Icon name="statistics" size={12} />
-                {compareStart ? t('kline.compareOn') : t('kline.compareOff')}
-              </button>
+              <div className="flex items-center gap-2">
+                {brushRange ? (
+                  <button type="button" className="ab-chip" onClick={clearBrush}>
+                    <Icon name="close" size={12} />
+                    {t('kline.brushClear', { count: brushRange.to - brushRange.from + 1 })}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="ab-chip"
+                  data-active={compareStart !== null || brushRange !== null}
+                  onClick={() => {
+                    if (brushRange) {
+                      clearBrush()
+                      return
+                    }
+                    setCompareStart(compareStart ? null : (bars[0]?.period_start ?? null))
+                  }}
+                >
+                  <Icon name="statistics" size={12} />
+                  {compareStart || brushRange ? t('kline.compareOn') : t('kline.compareOff')}
+                </button>
+              </div>
             }
           >
             {compareOption ? (
@@ -538,7 +649,10 @@ export function KlinePage() {
                 <p className="mt-1 text-ab-caption1 text-label-3">{t('kline.compareHint')}</p>
               </>
             ) : (
-              <p className="py-6 text-center text-ab-footnote text-label-3">{t('kline.compareEmpty')}</p>
+              <div className="py-6 text-center">
+                <p className="text-ab-footnote text-label-3">{t('kline.compareEmpty')}</p>
+                <p className="mt-1 text-ab-caption1 text-label-3">{t('kline.brushHint')}</p>
+              </div>
             )}
           </Card>
 

@@ -72,6 +72,22 @@ DRAWDOWN_WINDOW = 0
 #: 再留一倍余量，保证任何指标在区间第一根上都已经收敛
 WARMUP_BARS = 200
 
+#: 一次最多返回多少根。超过就自动换更粗的周期。
+#: 400 的依据：横向 1200px 的图上，一根蜡烛约占 3px —— 再密就只剩一条色带，
+#: 既读不出形状也点不中。
+MAX_BARS = 400
+
+#: 降周期的顺序。**不抽稀**：抽掉一根蜡烛，那个周期的开高低收就永久丢失了，
+#: 画出来的"低点"可能比真实的低点高，用户会据此判断"那天没跌那么狠"。
+#: 换更粗的周期则每一根都是真实的聚合结果，只是分辨率降低。
+COARSEN_ORDER: dict[str, str] = {
+    "day": "week",
+    "week": "month",
+    "month": "year",
+    # year 已经是最粗的一档：真到那一步就只能截断，见 resolve_period
+    "year": "year",
+}
+
 _PERIODS = {item.value for item in KlinePeriod}
 
 
@@ -414,6 +430,24 @@ def bars(
     ]
 
 
+def resolve_period(period: str, start: date, end: date) -> tuple[str, bool]:
+    """按根的密度决定实际使用的周期。
+
+    返回 ``(实际周期, 是否被降过)``。降级的理由必须能回到用户面前 ——
+    界面上要明说"区间太长，已按月线显示"，否则他会以为自己在看日线。
+    """
+    if period not in _PERIODS:
+        raise ValidationError(f"未知 K 线周期：{period}", field="period")
+
+    resolved = period
+    while resolved != "year":
+        spans = _period_range(resolved, start, end)
+        if len(spans) <= MAX_BARS:
+            break
+        resolved = COARSEN_ORDER[resolved]
+    return resolved, resolved != period
+
+
 def _warmup_start(period: str, start: date, warmup: int) -> date:
     """把起点往前推 ``warmup`` 个周期。
 
@@ -443,6 +477,14 @@ def series(
         raise ValidationError("结束日期不能早于起始日期", field="end")
     if period not in _PERIODS:
         raise ValidationError(f"未知 K 线周期：{period}", field="period")
+
+    # 长区间自动降周期（见 MAX_BARS 的说明）。指标在此基础上计算，
+    # 因此降级后的 MA/MACD 仍然是"该周期下正确的那条"。
+    # 变量名不能叫 requested —— 本函数下面已经用它表示"切片后的蜡烛数组"，
+    # 重名会让这个字符串在返回前被那串数组覆盖掉（这个坑真实踩过一次）
+    requested_period = period
+    resolved, downsampled = resolve_period(period, start, end)
+    period = resolved
 
     extended_start = _warmup_start(period, start, warmup) if indicators else start
     extended = bars(session, period=period, start=extended_start, end=end)
@@ -493,6 +535,11 @@ def series(
 
     return {
         "period": period,
+        # 用户要的周期与实际用的周期分开返回：界面据此提示"已自动降级"。
+        # 只给一个 period 的话，前端无法区分"本来就要月线"与"被降级了"
+        "requested_period": requested_period,
+        "downsampled": downsampled,
+        "max_bars": MAX_BARS,
         "start": start.isoformat(),
         "end": end.isoformat(),
         "warmup_bars": warmup if indicators else 0,

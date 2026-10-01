@@ -1135,3 +1135,63 @@ class TestAttachments:
         """没有任何附件时返回空数组，而不是报错。"""
         txn = self._txn(session)
         assert attachments_service.list_for_transaction(session, txn.id) == []
+
+
+class TestDownsampling:
+    """长区间降周期（T8）。
+
+    重点是**不抽稀**：抽掉一根蜡烛，那个周期的开高低收就永久丢失了，
+    画出来的"低点"可能比真实的低点高 —— 用户会据此判断"那天没跌那么狠"。
+    换更粗的周期则每一根都是真实的聚合结果。
+    """
+
+    def test_short_range_keeps_period(self) -> None:
+        period, downsampled = kline_service.resolve_period("day", date(2026, 7, 1), date(2026, 10, 1))
+        assert period == "day"
+        assert downsampled is False
+
+    def test_long_range_coarsens_step_by_step(self) -> None:
+        period, downsampled = kline_service.resolve_period("day", date(2021, 1, 1), date(2026, 1, 1))
+        assert period == "week", "5 年日线（1827 根）应降到周线"
+        assert downsampled is True
+
+    def test_threshold_is_bar_count_not_day_count(self) -> None:
+        """判据是**根数**：400 根压线保持日线，401 根才降级。
+
+        用"多少天"当判据会在不同周期上给出不一致的结果 ——
+        400 天在日线上是 400 根，在周线上只有 58 根。
+        """
+        start = date(2026, 1, 1)
+        assert kline_service.resolve_period("day", start, start + timedelta(days=399))[0] == "day"
+        assert kline_service.resolve_period("day", start, start + timedelta(days=400))[0] == "week"
+
+    def test_year_never_coarsens_further(self) -> None:
+        period, downsampled = kline_service.resolve_period("year", date(1900, 1, 1), date(2026, 1, 1))
+        assert period == "year"
+        assert downsampled is False
+
+    def test_series_reports_requested_and_actual(self, session: Session) -> None:
+        """响应里必须**同时**给出用户要的周期与实际用的周期。
+
+        只给一个 period 的话，前端无法区分"本来就要月线"与"被降级了"，
+        也就无法给出那句必要的提示。
+        """
+        account = _account(session)
+        accounts_service.update_account(session, account.id, initial_balance_minor=100_000)
+        _spend(session, day=TODAY, amount=1_000)
+
+        payload = kline_service.series(
+            session, period="day", start=date(2021, 1, 1), end=TODAY, indicators=False
+        )
+        assert payload["requested_period"] == "day"
+        assert payload["period"] == "week"
+        assert payload["downsampled"] is True
+        assert payload["max_bars"] == kline_service.MAX_BARS
+
+    def test_response_never_exceeds_max_bars_when_coarsenable(self, session: Session) -> None:
+        payload = kline_service.series(
+            session, period="day", start=date(2019, 1, 1), end=TODAY, indicators=False
+        )
+        # 允许一年一档时略微超出（年线无法再降级），但日/周/月三档必须收敛
+        if payload["period"] != "year":
+            assert payload["count"] <= kline_service.MAX_BARS

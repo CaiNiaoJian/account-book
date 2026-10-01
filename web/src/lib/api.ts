@@ -717,7 +717,13 @@ export interface KlineBar {
 }
 
 export interface KlineResponse {
+  /** **实际使用**的周期（区间过长时会被自动降级） */
   period: KlinePeriod
+  /** 用户请求的周期。与实际不同即说明发生了降级 */
+  requested_period: KlinePeriod
+  /** 是否被自动降级 —— 界面必须明说，否则用户以为自己在看日线 */
+  downsampled: boolean
+  max_bars: number
   start: string
   end: string
   /** 为了指标收敛而额外多取的根数；这些根不会出现在 bars 里 */
