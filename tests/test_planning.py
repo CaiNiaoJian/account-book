@@ -26,6 +26,7 @@ from accountbook.services import categories as categories_service
 from accountbook.services import debts as debts_service
 from accountbook.services import kline as kline_service
 from accountbook.services import recurring as recurring_service
+from accountbook.services import stats as stats_service
 from accountbook.services import transactions as transactions_service
 from accountbook.services.transactions import TransactionQuery
 
@@ -636,3 +637,56 @@ class TestKline:
     def test_invalid_period_rejected(self, session: Session) -> None:
         with pytest.raises(ValidationError):
             kline_service.series(session, period="minute", start=TODAY, end=TODAY)
+
+
+class TestCategoryTrend:
+    def test_months_are_continuous(self, session: Session) -> None:
+        """没有支出的月份也要出现 —— 堆叠面积图缺一个月会让横轴断开。"""
+        _spend(session, day=TODAY, amount=1_000)
+        payload = stats_service.category_trend(session, months=3, end=TODAY)
+        assert len(payload["months"]) == 3, f"月份轴应连续：{payload['months']}"
+        # 只有本月有支出，因此 rows 只覆盖一个月（不伪造 0 行）
+        assert {row["month"] for row in payload["rows"]} == {TODAY.isoformat()[:7]}
+
+    def test_splits_preferred(self, session: Session) -> None:
+        """分类构成必须遵守"分账优先"，与预算、日历同一口径。"""
+        account = _account(session)
+        transactions_service.create_transaction(
+            session,
+            type=TransactionType.EXPENSE.value,
+            account_id=account.id,
+            amount_minor=10_000,
+            occurred_at=datetime.combine(TODAY, datetime.min.time()).replace(hour=12),
+            splits=[
+                {"category_id": _category(session, "午餐"), "amount_minor": 7_000},
+                {"category_id": _category(session, "打车"), "amount_minor": 3_000},
+            ],
+        )
+        rows = stats_service.category_trend(session, months=1, end=TODAY)["rows"]
+        by_id = {row["category_id"]: row["amount_minor"] for row in rows}
+        assert by_id[_category(session, "午餐")] == 7_000
+        assert by_id[_category(session, "打车")] == 3_000
+
+    def test_transfers_excluded(self, session: Session) -> None:
+        accounts = accounts_service.list_accounts(session)
+        transactions_service.create_transaction(
+            session,
+            type=TransactionType.TRANSFER.value,
+            account_id=accounts[0].id,
+            to_account_id=accounts[1].id,
+            amount_minor=50_000,
+            occurred_at=datetime.combine(TODAY, datetime.min.time()).replace(hour=12),
+        )
+        assert stats_service.category_trend(session, months=1, end=TODAY)["rows"] == []
+
+    def test_zero_data_returns_empty(self, session: Session) -> None:
+        """没有任何流水时返回空数组，而不是报错或编零行。"""
+        payload = stats_service.category_trend(session, months=6, end=TODAY)
+        assert payload["rows"] == []
+        assert len(payload["months"]) == 6, "没有数据时月份轴仍然完整"
+
+    def test_bounds_are_rejected(self, session: Session) -> None:
+        with pytest.raises(ValidationError):
+            stats_service.category_trend(session, months=0)
+        with pytest.raises(ValidationError):
+            stats_service.category_trend(session, months=100)

@@ -24,8 +24,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..core.domain import TRANSFER_TYPES, TransactionStatus
+from ..core.errors import ValidationError
 from ..db.models import Account, Category, Transaction, TransactionSplit
 from . import accounts as accounts_service
+from . import aggregate
 from . import daily as daily_service
 from . import transactions as transactions_service
 
@@ -332,3 +334,61 @@ def integrity_report(session: Session) -> dict[str, Any]:
             ),
         },
     }
+
+
+def category_trend(session: Session, *, months: int = 12, end: date | None = None) -> dict[str, Any]:
+    """按月的分类构成，用于"支出去向随时间变化"的堆叠面积图。
+
+    刻意**逐月调用 ``aggregate.category_totals``**，而不是写一个大 SQL：
+    分类口径（分账优先、排除转账与作废）只应该存在一处，
+    在这里再写一遍 ``CASE WHEN splits...`` 就等于开了第二份实现，
+    而两份实现迟早会不一样。月份数上限是 36，逐月查询的代价可以接受。
+
+    返回值是 ``{"months": [...], "rows": [...]}``：
+
+    * ``months`` 是**连续完整的月份轴**。堆叠面积图缺一列会让横轴断开，
+      看起来像数据丢了，因此坐标轴不能靠"数据里出现过哪些月"去反推 ——
+      只有一个月有支出时，反推出来的轴就只有一个月；
+    * ``rows`` 只包含**真实有支出的** (月份, 分类) 组合，**不伪造 0 行**：
+      在数据层造出"0 元的午餐"这种不存在的记录，会让下游每个消费者
+      都得先学会忽略它们。
+    """
+    if months < 1:
+        raise ValidationError("月份数必须大于 0", field="months")
+    if months > 36:
+        raise ValidationError("一次最多查询 36 个月", field="months")
+
+    from ..core.periods import add_months
+
+    last = (end or date.today()).replace(day=1)
+    anchors = [add_months(last, -offset) for offset in range(months - 1, -1, -1)]
+
+    rows: list[dict[str, Any]] = []
+    for anchor in anchors:
+        start, finish = _month_span(anchor)
+        totals = aggregate.category_totals(session, start=start, end=finish, kind="expense")
+        for category_id, amount_minor in totals:
+            rows.append(
+                {
+                    "month": anchor.isoformat()[:7],
+                    "category_id": category_id,
+                    "category_name": "",  # 由 API 层补名字（服务层不碰展示文案）
+                    "amount_minor": amount_minor,
+                }
+            )
+    return {"months": [anchor.isoformat()[:7] for anchor in anchors], "rows": rows}
+
+
+def _month_span(anchor: date) -> tuple[date, date]:
+    """某个月的起止日。**当月截止到今天**。
+
+    用月末的话会把本月还没发生的日子也算进区间；虽然那些日子没有流水、
+    结果相同，但一旦将来支持"计划支出"就会悄悄把未来算进来。
+    """
+    start = anchor.replace(day=1)
+    last_day = calendar.monthrange(start.year, start.month)[1]
+    finish = start.replace(day=last_day)
+    today = date.today()
+    if finish > today:
+        finish = today
+    return start, finish

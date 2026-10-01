@@ -17,7 +17,7 @@ import { Chart } from '@/components/Chart'
 import { Icon } from '@/components/Icon'
 import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { useI18n } from '@/i18n'
-import { api } from '@/lib/api'
+import { api, type CategoryTrendRow } from '@/lib/api'
 import { displayMinor } from '@/lib/format'
 import { resolveToken, type TokenName } from '@/design/tokens'
 import { usePreferences } from '@/app/preferences'
@@ -52,24 +52,32 @@ export function StatisticsPage() {
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof api.summary>> | null>(null)
   const [calendarDays, setCalendarDays] = useState<Awaited<ReturnType<typeof api.calendar>>['days']>([])
   const [wall, setWall] = useState<Awaited<ReturnType<typeof api.assetWall>> | null>(null)
+  // 按月的分类构成：堆叠面积图与桑基图都用它
+  const [trend, setTrend] = useState<{ months: string[]; rows: CategoryTrendRow[] }>({
+    months: [],
+    rows: [],
+  })
 
   const range = useMemo(() => spanRange(span), [span])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [nextSeries, nextCashFlow, nextSummary, nextCalendar, nextWall] = await Promise.all([
+      const [nextSeries, nextCashFlow, nextSummary, nextCalendar, nextWall, nextTrend] =
+        await Promise.all([
         api.netWorthSeries(range.start, range.end),
         api.cashFlow({ months: range.months }),
         api.summary({ start: range.start, end: range.end, top_categories: 12 }),
         api.calendar(range.start, range.end, 'expense'),
         api.assetWall(),
+        api.categoryTrend(range.months),
       ])
       setSeries(nextSeries)
       setCashFlow(nextCashFlow)
       setSummary(nextSummary)
       setCalendarDays(nextCalendar.days)
       setWall(nextWall)
+      setTrend(nextTrend)
       setError(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -216,6 +224,157 @@ export function StatisticsPage() {
 
   // ---- 4/5/6. 分类构成（环形 / 矩形树 / 旭日） ------------------------------
   const composition = summary?.by_category ?? []
+
+  /**
+   * 分类构成堆叠面积图。
+   *
+   * 横轴用 `trend.months`（服务端给的**连续完整**月份轴），而不是从 rows 里
+   * 反推 —— 只有一个月有支出时，反推出来的轴就只有一个月，图会缺列。
+   * 缺失的 (月, 分类) 组合在这里补 0：这是**渲染需要**的补零，
+   * 与在数据层伪造 0 行是两件事。
+   */
+  const stackedAreaOption = useMemo(() => {
+    const months = trend.months
+    const byCategory = new Map<string, number[]>()
+    for (const row of trend.rows) {
+      const key = row.category_name || t('ledger.uncategorized')
+      if (!byCategory.has(key)) byCategory.set(key, new Array(months.length).fill(0))
+      const index = months.indexOf(row.month)
+      if (index >= 0) {
+        // noUncheckedIndexedAccess 下索引访问可能是 undefined，因此显式判空
+        const bucket = byCategory.get(key)
+        const current = bucket?.[index]
+        if (bucket !== undefined && current !== undefined) {
+          bucket[index] = current + row.amount_minor / 100
+        }
+      }
+    }
+    // 分类多时只画金额最大的前 8 类，其余合并 —— 20 条堆叠带读不出任何东西
+    const entries = [...byCategory.entries()].sort(
+      (a, b) => b[1].reduce((x, y) => x + y, 0) - a[1].reduce((x, y) => x + y, 0),
+    )
+    const top = entries.slice(0, 8)
+    const rest = entries.slice(8)
+    if (rest.length > 0) {
+      const merged = new Array(months.length).fill(0)
+      for (const [, values] of rest) values.forEach((value, index) => (merged[index] += value))
+      top.push([t('stats.otherCategories', { count: rest.length }), merged])
+    }
+
+    return {
+      legend: { top: 0, type: 'scroll' },
+      series: top.map(([name, values], index) => ({
+        name,
+        type: 'line',
+        stack: 'total',
+        areaStyle: { opacity: 0.75 },
+        symbol: 'none',
+        smooth: true,
+        lineStyle: { width: 0 },
+        itemStyle: { color: resolveToken(palette[index % palette.length] as TokenName) },
+        data: values,
+      })),
+      xAxis: { type: 'category', boundaryGap: false, data: months },
+      yAxis: { type: 'value', axisLabel: { fontSize: 10 } },
+      grid: { left: 4, right: 12, top: 30, bottom: 4, containLabel: true },
+      tooltip: { trigger: 'axis', valueFormatter: (value: number) => `¥${Number(value).toLocaleString('zh-CN')}` },
+    }
+  }, [trend, palette, t])
+
+  /**
+   * 桑基图：收入 → 资金池 → 各支出分类 + 结余。
+   *
+   * 不虚构中间节点 —— 这是真实的两段流向。结余只在收入大于支出时出现，
+   * 否则会多画一个 0 宽的节点。
+   */
+  const sankeyOption = useMemo(() => {
+    const income = (summary?.income_minor ?? 0) / 100
+    const top = composition.slice(0, 8)
+    const spent = top.reduce((sum, item) => sum + item.amount_minor, 0) / 100
+    const restSpent = (summary?.expense_minor ?? 0) / 100 - spent
+    const surplus = income - (summary?.expense_minor ?? 0) / 100
+
+    const hub = t('stats.pool')
+    const incomeNode = t('transactionType.income')
+    const nodes = [{ name: incomeNode }, { name: hub }]
+    const links = [{ source: incomeNode, target: hub, value: Math.max(0, income) }]
+    for (const item of top) {
+      nodes.push({ name: item.category_name })
+      links.push({ source: hub, target: item.category_name, value: item.amount_minor / 100 })
+    }
+    if (restSpent > 0.01) {
+      // 先把名字取出来：直接取 nodes[last].name 在 noUncheckedIndexedAccess
+      // 下是 possibly undefined，而这里本来也不需要那个索引访问
+      const otherName = t('stats.otherCategories', { count: Math.max(1, composition.length - 8) })
+      nodes.push({ name: otherName })
+      links.push({ source: hub, target: otherName, value: restSpent })
+    }
+    if (surplus > 0.01) {
+      nodes.push({ name: t('stats.surplus') })
+      links.push({ source: hub, target: t('stats.surplus'), value: surplus })
+    }
+
+    return {
+      series: [
+        {
+          type: 'sankey',
+          left: 8,
+          right: 8,
+          top: 12,
+          bottom: 8,
+          nodeWidth: 12,
+          nodeGap: 8,
+          emphasis: { focus: 'adjacency' },
+          label: { fontSize: 11 },
+          lineStyle: { color: 'gradient', opacity: 0.35, curveness: 0.5 },
+          data: nodes,
+          links,
+        },
+      ],
+      tooltip: { trigger: 'item', valueFormatter: (value: number) => `¥${Number(value).toLocaleString('zh-CN')}` },
+    }
+  }, [summary, composition, t])
+
+  /**
+   * 气泡图：按日支出分布。
+   *
+   * 横轴是日期、纵轴是当日支出、气泡大小是笔数。
+   * 用按日聚合而不是逐笔流水：逐笔需要一次可能很大的分页查询，
+   * 而"哪几天花得多、哪些天笔数集中"用日聚合就能回答。
+   */
+  const bubbleOption = useMemo(() => {
+    const days = calendarDays.filter((day) => day.expense_minor > 0)
+    const maxAmount = Math.max(1, ...days.map((day) => day.expense_minor))
+    return {
+      xAxis: { type: 'category', data: days.map((day) => day.date.slice(5)), axisLabel: { fontSize: 9 } },
+      yAxis: {
+        type: 'value',
+        axisLabel: { fontSize: 9 },
+        name: t('stats.dailyAmount'),
+        nameTextStyle: { fontSize: 10 },
+      },
+      series: [
+        {
+          type: 'scatter',
+          data: days.map((day) => [
+            day.date.slice(5),
+            day.expense_minor / 100,
+            Math.max(6, Math.round((day.expense_minor / maxAmount) * 28)),
+            day.tx_count,
+          ]),
+          symbolSize: (value: number[]) => value[2] ?? 8,
+          itemStyle: { color: resolveToken('negative'), opacity: 0.55 },
+        },
+      ],
+      grid: { left: 4, right: 14, top: 26, bottom: 4, containLabel: true },
+      tooltip: {
+        trigger: 'item',
+        formatter: (params: { value: number[] }) =>
+          `${params.value[0]}<br/>${t('transactionType.expense')} ¥${Number(params.value[1]).toLocaleString('zh-CN')}<br/>${t('calendar.txCount', { count: Number(params.value[3] ?? 0) })}`,
+      },
+    }
+  }, [calendarDays, t])
+
 
   const donutOption = useMemo(
     () => ({
@@ -549,6 +708,28 @@ export function StatisticsPage() {
         <Card title={t('stats.expenseByWeekday')}>
           <Chart option={boxplotOption} height={240} />
           <p className="mt-1 text-ab-caption1 text-label-3">{t('stats.boxplotHint')}</p>
+        </Card>
+
+        <Card title={t('stats.compositionStacked')} className="xl:col-span-2">
+          <p className="mb-1 text-ab-caption1 text-label-3">{t('stats.stackedHint')}</p>
+          {trend.rows.length === 0 ? (
+            <EmptyState icon="statistics" title={t('stats.noExpense')} body={t('stats.noExpenseBody')} />
+          ) : (
+            <Chart option={stackedAreaOption} height={280} />
+          )}
+        </Card>
+
+        <Card title={t('stats.sankeyTitle')}>
+          {(summary?.income_minor ?? 0) <= 0 ? (
+            <EmptyState icon="statistics" title={t('stats.noIncome')} body={t('stats.noIncomeBody')} />
+          ) : (
+            <Chart option={sankeyOption} height={280} />
+          )}
+        </Card>
+
+        <Card title={t('stats.bubbleTitle')}>
+          <p className="mb-1 text-ab-caption1 text-label-3">{t('stats.bubbleHint')}</p>
+          <Chart option={bubbleOption} height={260} />
         </Card>
 
         <Card title={t('stats.financialProfile')} className="xl:col-span-2">

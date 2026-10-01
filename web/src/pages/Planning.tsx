@@ -12,9 +12,10 @@
  *    告诉用户"设一个预算之后这里会显示什么"。
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Icon } from '@/components/Icon'
+import { Chart } from '@/components/Chart'
 import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { useI18n } from '@/i18n'
 import {
@@ -28,6 +29,7 @@ import {
   type UpcomingRule,
 } from '@/lib/api'
 import { displayMinor, formatDayLabel, localDayKey } from '@/lib/format'
+import { resolveToken } from '@/design/tokens'
 import { usePreferences } from '@/app/preferences'
 
 import { AmountField, CategoryPicker, Modal, MoneyText } from '@/features/ledger/parts'
@@ -175,7 +177,10 @@ export function BudgetsPage() {
         <>
           {total ? (
             <Card title={t('budgets.totalTitle')}>
-              <BudgetRing item={total} />
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <BudgetRing item={total} />
+                <BudgetGauge item={total} />
+              </div>
               <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <Stat label={t('budgets.available')} value={displayMinor(total.available_minor, 'CNY', preferences.privacy_mode)} />
                 <Stat
@@ -422,6 +427,80 @@ function BudgetRing({ item }: { item: BudgetStatus }) {
           </div>
         ) : null}
       </div>
+    </div>
+  )
+}
+
+/**
+ * 预算仪表盘。
+ *
+ * 与旁边的进度环**不是重复**：环回答"用了多少"，仪表盘画出刻度与
+ * 提醒阈值，回答"离那条线还有多远" —— 后者才是预算真正要盯的东西。
+ *
+ * 指针夹在 0–130%：超支再多，指针也停在最右侧并变红，
+ * 因为再往后增长已经不再提供新信息（数字本身在旁边写着）。
+ */
+function BudgetGauge({ item }: { item: BudgetStatus }) {
+  const { t } = useI18n()
+  const ratio = Math.max(0, Math.min(130, item.ratio * 100))
+  const threshold = Math.min(130, item.alert_threshold * 100)
+
+  const option = useMemo(() => {
+    const over = item.over
+    const alert = item.alert
+    return {
+      series: [
+        {
+          type: 'gauge',
+          min: 0,
+          max: 130,
+          startAngle: 200,
+          endAngle: -20,
+          radius: '96%',
+          center: ['50%', '62%'],
+          splitNumber: 0,
+          axisLine: {
+            lineStyle: {
+              width: 12,
+              // 三段色带直接表达"安全 / 接近上限 / 超支"
+              color: [
+                [threshold / 130, resolveToken('accent')],
+                [1, resolveToken(over ? 'negative' : 'warning')],
+              ],
+            },
+          },
+          pointer: {
+            width: 4,
+            length: '62%',
+            itemStyle: { color: resolveToken(over ? 'negative' : alert ? 'warning' : 'accent') },
+          },
+          axisTick: { show: false },
+          splitLine: { show: false },
+          axisLabel: { show: false },
+          detail: {
+            fontSize: 15,
+            fontWeight: 600,
+            color: resolveToken('text'),
+            offsetCenter: [0, '38%'],
+            formatter: () => `${(item.ratio * 100).toFixed(0)}%`,
+          },
+          title: {
+            fontSize: 11,
+            color: resolveToken('text-3'),
+            offsetCenter: [0, '68%'],
+          },
+          data: [{ value: ratio, name: t('stats.budgetGauge') }],
+        },
+      ],
+    }
+  }, [item, ratio, threshold, t])
+
+  return (
+    <div className="min-w-0 flex-1">
+      <Chart option={option} height={150} />
+      <p className="text-ab-caption1 text-label-3">
+        {t('budgets.gaugeHint', { percent: Math.round(item.alert_threshold * 100) })}
+      </p>
     </div>
   )
 }

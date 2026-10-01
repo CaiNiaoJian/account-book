@@ -494,7 +494,20 @@ export const zhCN = {
     profile: '当前区间',
     profileHint: '五个维度全部由既有数据算出，没有主观打分，且方向统一为「越高越好」—— 否则雷达的形状会让人做出相反的判断。',
     dim: { saving: '储蓄率', coverage: '记录完整度', stability: '支出稳定性', balance: '分类均衡度', liquidity: '资产流动性' },
-  },  // ---- P1 收尾 / P3 ---------------------------------------------------------
+    otherCategories: '其它 {count} 类',
+    surplus: '结余',
+    pool: '资金池',
+    compositionStacked: '支出去向（堆叠面积）',
+    stackedHint: '只画金额最大的前 8 类，其余合并为「其它」—— 20 条堆叠带读不出任何东西。缺失的月份补 0 是渲染需要，数据层不伪造 0 行。',
+    sankeyTitle: '资金流向（桑基图）',
+    bubbleTitle: '大额分布（按日）',
+    bubbleHint: '气泡越大表示当天支出越多，悬浮可看当天笔数。用按日聚合而不是逐笔流水：逐笔需要一次可能很大的分页查询，而这几个问题用日聚合就能回答。',
+    dailyAmount: '当日支出',
+    noIncome: '区间内没有收入',
+    noIncomeBody: '桑基图从"钱从哪来"开始画，因此至少需要一笔收入。',
+    budgetGauge: '已用比例',
+  },
+  // ---- P1 收尾 / P3 ---------------------------------------------------------
   budgets: {
     untitled: '预算',
     new: '新建预算',
@@ -533,6 +546,7 @@ export const zhCN = {
     alertAt: '用掉 {percent}% 时提醒',
     rollover: '结转未用额度',
     rolloverHint: '只结转正余额：上期超支不会吃掉本期额度',
+    gaugeHint: '刻度到 130% 为止：用掉 {percent}% 时提醒。超支再多指针也停在最右并变红 —— 数字本身在旁边写着。',
   },
   recurring: {
     untitled: '周期记账',

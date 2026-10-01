@@ -69,3 +69,33 @@ def summary(
 def integrity(session: Session = SessionDep) -> dict[str, Any]:
     """检查"数据悄悄坏了"的情况（悬空引用、分账金额不符等）。"""
     return stats_service.integrity_report(session)
+
+
+@router.get("/category-trend", summary="按月的分类构成（堆叠面积图数据源）")
+def category_trend(
+    months: int = Query(default=12, ge=1, le=36),
+    end: date | None = Query(default=None),
+    session: Session = SessionDep,
+) -> dict[str, Any]:
+    """按月的分类支出构成。
+
+    月份**连续补齐**（没有支出的月份也会出现在 ``months`` 列表里）——
+    堆叠面积图缺一个月会让横轴断开，看起来像数据丢了。
+    """
+    from ...services.categories import get_category
+    from ...services.stats import category_trend as build_trend
+
+    payload = build_trend(session, months=months, end=end)
+
+    names: dict[int, str] = {}
+    for row in payload["rows"]:
+        category_id = row["category_id"]
+        if category_id and category_id not in names:
+            try:
+                names[category_id] = get_category(session, category_id).name
+            except Exception:  # noqa: BLE001 - 分类被删时不该让整页失败
+                names[category_id] = "未分类"
+    for row in payload["rows"]:
+        row["category_name"] = names.get(row["category_id"] or 0, "未分类")
+
+    return payload

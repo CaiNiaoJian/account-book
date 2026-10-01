@@ -499,7 +499,22 @@ export const enUS = {
       balance: 'Category balance',
       liquidity: 'Asset liquidity',
     },
-  },  // ---- P1 wrap-up / P3 ------------------------------------------------------
+    otherCategories: 'Other {count}',
+    surplus: 'Surplus',
+    pool: 'Pool',
+    compositionStacked: 'Where it went (stacked)',
+    stackedHint:
+      'Only the 8 largest categories are drawn; the rest merge into "Other" — 20 stacked bands are unreadable. Filling missing months with 0 is a rendering need; the data layer does not invent zero rows.',
+    sankeyTitle: 'Money flow (Sankey)',
+    bubbleTitle: 'Large spending (by day)',
+    bubbleHint:
+      'A larger bubble means more spent that day; hover for the number of entries. Daily aggregates rather than per-transaction: that would need a potentially large paged query, and daily data already answers these questions.',
+    dailyAmount: 'Spent',
+    noIncome: 'No income in this range',
+    noIncomeBody: 'The Sankey starts from where the money came from, so it needs at least one income entry.',
+    budgetGauge: 'Used',
+  },
+  // ---- P1 wrap-up / P3 ------------------------------------------------------
   budgets: {
     untitled: 'Budget',
     new: 'New budget',
@@ -540,6 +555,7 @@ export const enUS = {
     alertAt: 'Alert at {percent}%',
     rollover: 'Carry over unused amount',
     rolloverHint: 'Only positive balances carry over: overspending does not eat into the next period',
+    gaugeHint: 'Scale runs to 130%: alert at {percent}%. Past that the needle stays right and turns red — the number itself is beside it.',
   },
   recurring: {
     untitled: 'Recurring',

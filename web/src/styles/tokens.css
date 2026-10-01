@@ -265,3 +265,28 @@ textarea,
   background-size: 200% 100%;
   animation: ab-shimmer 1.6s linear infinite;
 }
+
+
+/* 日历格子的波次点亮：只动 opacity 与极小的位移。
+   刻意不做缩放 —— 371 个格子同时缩放会在低端机上明显掉帧，
+   而"依次出现"这个信息只靠透明度就足够了。 */
+@keyframes ab-cell-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 用户要求减少动态效果时，波次点亮整体关闭（REQ-7 无障碍）。
+   用 CSS 兜底而不是只在 JS 里判断：CSS 动画不经过 React，
+   仅靠 MotionConfig 是管不到它的。 */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes ab-cell-in {
+    from { opacity: 1; transform: none; }
+    to { opacity: 1; transform: none; }
+  }
+}

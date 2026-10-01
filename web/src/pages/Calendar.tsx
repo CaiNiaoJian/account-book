@@ -366,10 +366,20 @@ export function CalendarPage() {
                             onMouseLeave={() => setHovered(null)}
                             onFocus={() => setHovered(day)}
                             aria-label={`${day.date} ${t(`calendar.entry.${day.entry_state}`)}`}
+                            // 波次点亮：按列延迟，整张图从左到右铺开。
+                            // 用 CSS animation-delay 而不是 framer-motion 的 stagger：
+                            // 371 个格子各自变成一个 motion 组件会让首帧明显卡顿，
+                            // 而这里需要的只是"依次出现"
+                            style={
+                              {
+                                backgroundColor: cellColor(metric, day.level),
+                                animation: 'ab-cell-in 240ms cubic-bezier(0.32, 0.72, 0, 1) both',
+                                animationDelay: `${Math.min(600, columnIndex * 8)}ms`,
+                              } as React.CSSProperties
+                            }
                             className={`relative h-[11px] w-[11px] rounded-[3px] transition-transform hover:scale-[1.35] ${
                               selected === day.date ? 'ring-2 ring-accent' : ''
                             }`}
-                            style={{ backgroundColor: cellColor(metric, day.level) }}
                           >
                             {/* 角标：一个 2px 的小点。比在格子上叠图标更能保持矩阵的整洁 */}
                             {day.badges.length > 0 ? (

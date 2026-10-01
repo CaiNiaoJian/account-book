@@ -1007,6 +1007,16 @@ export const api = {
    */
   kline: (params: { period?: KlinePeriod; start?: string; end?: string; indicators?: boolean } = {}) =>
     request<KlineResponse>(`/api/kline${query(params)}`),
+  /**
+   * 按月的分类构成（堆叠面积图数据源）。
+   *
+   * `months` 是**连续完整的月份轴**，`rows` 只含有支出的组合 ——
+   * 坐标轴必须用 `months`，从 `rows` 反推会在只有一个月有数据时缺列。
+   */
+  categoryTrend: (months = 12) =>
+    request<{ months: string[]; rows: CategoryTrendRow[] }>(
+      `/api/stats/category-trend${query({ months })}`,
+    ),
   /** 指标参数。口径说明页直接渲染它，参数一改说明页自动跟着变 */
   klineParams: () => request<KlineParams>('/api/kline/params'),
 
@@ -1032,6 +1042,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+}
+
+export interface CategoryTrendRow {
+  month: string
+  category_id: number | null
+  category_name: string
+  amount_minor: number
 }
 
 export interface TemplateItem {
