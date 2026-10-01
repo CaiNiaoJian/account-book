@@ -1282,6 +1282,207 @@ export const api = {
   aiAnalyzeUrl: (params: { kind: ReportKind; start?: string; end?: string }) =>
     `/api/reports/ai-analyze${query(params)}`,
 
+// ---- P6：薪酬 --------------------------------------------------------------
+  payrollSources: (includeDisabled = true) =>
+    request<{ items: PaySource[]; count: number }>(
+      `/api/payroll/sources${query({ include_disabled: includeDisabled })}`,
+    ),
+  createPayrollSource: (payload: Record<string, unknown>) =>
+    request<PaySource>('/api/payroll/sources', { method: 'POST', body: JSON.stringify(payload) }),
+  updatePayrollSource: (id: number, payload: Record<string, unknown>) =>
+    request<PaySource>(`/api/payroll/sources/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deletePayrollSource: (id: number) =>
+    request<void>(`/api/payroll/sources/${id}`, { method: 'DELETE' }),
+  setPaydayRule: (id: number, payload: Record<string, unknown>) =>
+    request<PaydayRule>(`/api/payroll/sources/${id}/rule`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  payrollComponents: (sourceId?: number, includeDisabled = true) =>
+    request<{ items: PayComponent[]; count: number }>(
+      `/api/payroll/components${query({ source_id: sourceId, include_disabled: includeDisabled })}`,
+    ),
+  createPayrollComponent: (payload: Record<string, unknown>) =>
+    request<PayComponent>('/api/payroll/components', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updatePayrollComponent: (id: number, payload: Record<string, unknown>) =>
+    request<PayComponent>(`/api/payroll/components/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deletePayrollComponent: (id: number) =>
+    request<void>(`/api/payroll/components/${id}`, { method: 'DELETE' }),
+  /** 试算，**不落库** */
+  computePayroll: (sourceId: number) =>
+    request<PayrollCompute>(`/api/payroll/compute${query({ source_id: sourceId })}`),
+  payrollRecords: (params: { source_id?: number; status?: string; limit?: number } = {}) =>
+    request<{ items: PayrollRecord[]; count: number }>(`/api/payroll/records${query(params)}`),
+  createPayrollRecord: (payload: Record<string, unknown>) =>
+    request<PayrollRecord>('/api/payroll/records', { method: 'POST', body: JSON.stringify(payload) }),
+  recomputePayrollRecord: (id: number) =>
+    request<PayrollRecord>(`/api/payroll/records/${id}/recompute`, { method: 'POST' }),
+  fillPayrollRecord: (id: number, payload: { create_transaction?: boolean } = {}) =>
+    request<{ record_id: number; transaction_id: number | null; created: boolean }>(
+      `/api/payroll/records/${id}/fill`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+  skipPayrollRecord: (id: number, reason: string) =>
+    request<PayrollRecord>(`/api/payroll/records/${id}/skip`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  deletePayrollRecord: (id: number) =>
+    request<void>(`/api/payroll/records/${id}`, { method: 'DELETE' }),
+  payDate: (sourceId: number, period: string) =>
+    request<PaydayResolution>(`/api/payroll/pay-date${query({ source_id: sourceId, period })}`),
+  upcomingPaydays: (months = 3) =>
+    request<{ items: (PaydayResolution & { source_name: string; employer: string })[] }>(
+      `/api/payroll/upcoming${query({ months })}`,
+    ),
+  pendingPayroll: () => request<{ items: PayrollRecord[] }>('/api/payroll/pending'),
+  payrollOverview: (period: string, historyMonths = 12) =>
+    request<PayrollOverview>(`/api/payroll/overview${query({ period, history_months: historyMonths })}`),
+
+  // ---- P6：五险一金 ----------------------------------------------------------
+  insuranceItems: (city?: string) =>
+    request<{ items: InsuranceItem[]; count: number }>(`/api/insurance/items${query({ city })}`),
+  /** 铺标准险种：**只铺名称与结构标志，比例一律留 0**，且不覆盖已填比例 */
+  ensureInsuranceItems: (city = '') =>
+    request<{ items: InsuranceItem[]; count: number }>(
+      `/api/insurance/items/ensure${query({ city })}`,
+      { method: 'POST' },
+    ),
+  upsertInsuranceItem: (payload: Record<string, unknown>) =>
+    request<InsuranceItem>('/api/insurance/items', { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteInsuranceItem: (id: number) =>
+    request<void>(`/api/insurance/items/${id}`, { method: 'DELETE' }),
+  insuranceProfiles: (includeDisabled = false) =>
+    request<{ items: InsuranceProfile[]; count: number }>(
+      `/api/insurance/profiles${query({ include_disabled: includeDisabled })}`,
+    ),
+  createInsuranceProfile: (payload: Record<string, unknown>) =>
+    request<InsuranceProfile>('/api/insurance/profiles', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateInsuranceProfile: (id: number, payload: Record<string, unknown>) =>
+    request<InsuranceProfile>(`/api/insurance/profiles/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteInsuranceProfile: (id: number) =>
+    request<void>(`/api/insurance/profiles/${id}`, { method: 'DELETE' }),
+  computeInsurance: (profileId: number) =>
+    request<InsuranceCompute>(`/api/insurance/compute${query({ profile_id: profileId })}`),
+  insuranceContributions: (params: { profile_id?: number; period?: string } = {}) =>
+    request<{ items: InsuranceContribution[]; count: number }>(
+      `/api/insurance/contributions${query(params)}`,
+    ),
+  recordInsuranceContribution: (profileId: number, period: string, overwrite = false) =>
+    request<{ items: InsuranceContribution[]; count: number }>('/api/insurance/contributions', {
+      method: 'POST',
+      body: JSON.stringify({ profile_id: profileId, period, overwrite }),
+    }),
+  insuranceAccounts: (profileId?: number) =>
+    request<{ balances: Record<string, number>; total_minor: number }>(
+      `/api/insurance/accounts${query({ profile_id: profileId })}`,
+    ),
+  insuranceWithdrawals: (profileId?: number) =>
+    request<{ items: Record<string, unknown>[]; count: number }>(
+      `/api/insurance/withdrawals${query({ profile_id: profileId })}`,
+    ),
+  addInsuranceWithdrawal: (payload: Record<string, unknown>) =>
+    request<Record<string, unknown>>('/api/insurance/withdrawals', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deleteInsuranceWithdrawal: (id: number) =>
+    request<void>(`/api/insurance/withdrawals/${id}`, { method: 'DELETE' }),
+  insuranceStatement: (profileId: number, year: number) =>
+    request<InsuranceStatement>(`/api/insurance/statement${query({ profile_id: profileId, year })}`),
+  saveInsuranceStatement: (payload: Record<string, unknown>) =>
+    request<InsuranceStatement>('/api/insurance/statement', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  insuranceOverview: (startPeriod: string, endPeriod: string) =>
+    request<InsuranceOverview>(
+      `/api/insurance/overview${query({ start_period: startPeriod, end_period: endPeriod })}`,
+    ),
+
+  // ---- P6：工作日日历 --------------------------------------------------------
+  workdays: (year?: number) =>
+    request<{
+      items: { day: string; is_workday: boolean; kind: string; name: string; source: string; note: string }[]
+      count: number
+      /** 哪些年份已录入 —— 界面据此提示"今年的节假日还没录" */
+      covered_years: number[]
+    }>(`/api/workdays${query({ year })}`),
+  setWorkday: (payload: { day: string; is_workday: boolean; name?: string; note?: string }) =>
+    request<Record<string, unknown>>('/api/workdays', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deleteWorkday: (day: string) => request<void>(`/api/workdays/${day}`, { method: 'DELETE' }),
+  /** 批量粘贴官方公告；**无法解析的行会原样返回** */
+  importWorkdays: (text: string) =>
+    request<{ saved: number; unparsed: string[] }>('/api/workdays/import', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
+  // ---- P6：定时任务与提醒 ----------------------------------------------------
+  scheduledTasks: (includeDisabled = true) =>
+    request<{ items: ScheduledTask[]; count: number }>(
+      `/api/scheduler/tasks${query({ include_disabled: includeDisabled })}`,
+    ),
+  upsertScheduledTask: (payload: Record<string, unknown>) =>
+    request<ScheduledTask>('/api/scheduler/tasks', { method: 'POST', body: JSON.stringify(payload) }),
+  deleteScheduledTask: (id: number) =>
+    request<void>(`/api/scheduler/tasks/${id}`, { method: 'DELETE' }),
+  /** 不等计划时刻，立即执行 */
+  runScheduledTask: (id: number, dryRun = false) =>
+    request<Record<string, unknown>>(
+      `/api/scheduler/tasks/${id}/run${query({ dry_run: dryRun })}`,
+      { method: 'POST' },
+    ),
+  runDueTasks: (dryRun = false) =>
+    request<{ items: Record<string, unknown>[]; count: number; dry_run: boolean }>(
+      `/api/scheduler/run${query({ dry_run: dryRun })}`,
+      { method: 'POST' },
+    ),
+  taskHistory: (limit = 100) =>
+    request<{ items: TaskRun[] }>(`/api/scheduler/history${query({ limit })}`),
+  taskHealth: () => request<TaskHealth>('/api/scheduler/health'),
+  /** 必须处理的提示（前端门禁） */
+  blockingPrompts: () =>
+    request<{ items: PendingPrompt[]; count: number }>('/api/scheduler/blocking'),
+  prompts: (status?: string) =>
+    request<{ items: PendingPrompt[] }>(`/api/scheduler/prompts${query({ status })}`),
+  snoozePrompt: (id: number, minutes = 30) =>
+    request<PendingPrompt>(`/api/scheduler/prompts/${id}/snooze`, {
+      method: 'POST',
+      body: JSON.stringify({ minutes }),
+    }),
+  skipPrompt: (id: number, reason: string) =>
+    request<PendingPrompt>(`/api/scheduler/prompts/${id}/skip`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  resolvePrompt: (id: number) =>
+    request<PendingPrompt>(`/api/scheduler/prompts/${id}/resolve`, { method: 'POST' }),
+  notifications: (params: { unread_only?: boolean; limit?: number } = {}) =>
+    request<{ items: NotificationItem[]; count: number; unread: number }>(
+      `/api/notifications${query(params)}`,
+    ),
+  unreadNotifications: () => request<{ unread: number }>('/api/notifications/unread-count'),
+  readNotification: (id: number) =>
+    request<{ unread: number }>(`/api/notifications/${id}/read`, { method: 'POST' }),
+  readAllNotifications: () =>
+    request<{ marked: number }>('/api/notifications/read-all', { method: 'POST' }),
+
   /** 指标参数。口径说明页直接渲染它，参数一改说明页自动跟着变 */
   klineParams: () => request<KlineParams>('/api/kline/params'),
 
@@ -1466,6 +1667,304 @@ export interface AiStreamMeta {
   fallback_reason: string
   error: string
   analysis_id: number | null
+}
+
+// ---- P6：薪酬与五险一金 ------------------------------------------------------
+export interface PaySource {
+  id: number
+  name: string
+  kind: 'salary' | 'part_time' | 'bonus' | 'investment' | 'rent' | 'other'
+  employer: string
+  account_id: number | null
+  category_id: number | null
+  enabled: boolean
+  priority: number
+  sort_order: number
+  note: string
+}
+
+export interface PayComponent {
+  id: number
+  source_id: number | null
+  name: string
+  kind: string
+  calc: 'fixed' | 'ratio' | 'formula'
+  /** 1 = 加项（进应发），-1 = 减项 */
+  sign: 1 | -1
+  amount_minor: number
+  base_key: 'basic' | 'gross'
+  rate_bps: number
+  /** 公式的 JSON 表达式树。**不是字符串** —— 工资表可被导入，字符串求值等于开了代码执行入口 */
+  formula: Record<string, unknown>
+  enabled: boolean
+  sort_order: number
+}
+
+export interface PayComponentSnapshot {
+  component_id: number
+  name: string
+  kind: string
+  sign: number
+  direction: 'add' | 'deduct'
+  calc: string
+  amount_minor: number
+  rate_bps: number
+  base_key: string
+  source_amount_minor: number
+}
+
+export interface PayrollRecord {
+  id: number
+  source_id: number
+  period: string
+  pay_date: string
+  gross_minor: number
+  net_minor: number
+  tax_minor: number
+  insurance_minor: number
+  items: PayComponentSnapshot[]
+  status: 'draft' | 'filled' | 'skipped'
+  skip_reason: string
+  transaction_id: number | null
+  filled_at: string | null
+  note: string
+}
+
+export interface PayrollCompute {
+  source_id: number
+  gross_minor: number
+  deduction_minor: number
+  net_minor: number
+  basic_minor: number
+  tax_minor: number
+  insurance_minor: number
+  items: PayComponentSnapshot[]
+}
+
+export interface PaydayRule {
+  id: number
+  source_id: number
+  day_of_month: number
+  day_kind: 'fixed' | 'month_end' | 'last_workday' | 'nth_workday'
+  nth: number
+  weekend_policy: 'advance' | 'postpone' | 'none'
+  holiday_policy: 'advance' | 'postpone' | 'none'
+  enabled: boolean
+  remind_at: string
+  grace_days: number
+  require_form: boolean
+  note: string
+}
+
+/**
+ * 发薪日的置信度。
+ *
+ * `exact` 有规则且该年节假日已录入 / `assumed` 有规则但该年节假日未录入
+ * （调休与法定假期可能没算进去）/ `inferred` 还没配规则，用的是默认 15 日。
+ *
+ * 界面必须把后两种明确标出来 —— 一个"看起来算过"的日期会被用户当真。
+ */
+export interface PaydayResolution {
+  period: string
+  base_date: string
+  pay_date: string
+  adjusted: boolean
+  reason: 'weekend' | 'holiday' | ''
+  policy: string
+  shift_days: number
+  holiday_name: string
+  confidence: 'exact' | 'assumed' | 'inferred'
+}
+
+export interface PayrollOverview {
+  period: string
+  current: { gross_minor: number; net_minor: number; tax_minor: number; insurance_minor: number; count: number }
+  same_month_last_year: { gross_minor: number; net_minor: number; tax_minor: number; insurance_minor: number; count: number }
+  delta: { gross: number | null; net: number | null; tax: number | null; insurance: number | null }
+  /** 逐月趋势，**已补全没有记录的月份** */
+  months: { period: string; gross_minor: number; net_minor: number; count: number }[]
+  pending: PayrollRecord[]
+}
+
+export interface InsuranceItem {
+  id: number
+  kind: string
+  name: string
+  city: string
+  personal_rate_bps: number
+  employer_rate_bps: number
+  personal_to_account: boolean
+  employer_to_account: boolean
+  floor_base_minor: number | null
+  cap_base_minor: number | null
+  use_housing_base: boolean
+  enabled: boolean
+  sort_order: number
+  note: string
+  /** 界面上要能直接看出"这一项还没填比例"，而不是显示成 0% */
+  rates_filled: boolean
+}
+
+export interface InsuranceProfile {
+  id: number
+  name: string
+  member_id: number | null
+  city: string
+  employer: string
+  social_base_minor: number
+  housing_base_minor: number
+  effective_from: string | null
+  effective_to: string | null
+  enabled: boolean
+  note: string
+  account_balance_minor: number
+}
+
+export interface InsuranceContribution {
+  id: number
+  profile_id: number
+  item_id: number
+  item_name: string
+  item_kind: string
+  period: string
+  base_minor: number
+  raw_base_minor: number
+  personal_rate_bps: number
+  employer_rate_bps: number
+  personal_minor: number
+  employer_minor: number
+  to_account_minor: number
+  source: string
+  note: string
+}
+
+export interface InsuranceCompute {
+  profile_id: number
+  profile_name: string
+  city: string
+  items: {
+    item_id: number
+    kind: string
+    name: string
+    raw_base_minor: number
+    base_minor: number
+    /** 'floor' / 'cap' / '' —— 收敛必须报出来 */
+    clamped: string
+    personal_rate_bps: number
+    employer_rate_bps: number
+    personal_minor: number
+    employer_minor: number
+    to_account_minor: number
+    rates_filled: boolean
+  }[]
+  personal_total_minor: number
+  employer_total_minor: number
+  to_account_total_minor: number
+  /** 有险种比例未填时合计必然偏小 —— 界面要显示成"待配置"而不是"缴得少" */
+  incomplete: boolean
+  unfilled_items: string[]
+}
+
+export interface InsuranceOverview {
+  start_period: string
+  end_period: string
+  personal_total_minor: number
+  employer_total_minor: number
+  total_minor: number
+  employer_share: number | null
+  by_kind: { kind: string; name: string; personal_minor: number; employer_minor: number }[]
+  by_period: { period: string; personal_minor: number; employer_minor: number }[]
+  account_balances: Record<string, number>
+  account_total_minor: number
+  profile_count: number
+  record_count: number
+}
+
+export interface InsuranceStatement {
+  profile_id: number
+  year: number
+  months_recorded: number
+  items: { item_id: number; item_name: string; item_kind: string; personal_minor: number; employer_minor: number; to_account_minor: number; months: number }[]
+  computed_personal_minor: number
+  computed_employer_minor: number
+  computed_total_minor: number
+  interest_minor: number
+  account_balances: Record<string, number>
+  account_total_minor: number
+  expected: { personal_minor: number | null; employer_minor: number | null; balance_minor: number | null }
+  difference: { personal_minor: number | null; employer_minor: number | null; balance_minor: number | null }
+  expected_months: number
+  missing_months: number
+  reconciled_at: string | null
+}
+
+// ---- P6：定时任务与提醒 ------------------------------------------------------
+export interface ScheduledTask {
+  id: number
+  code: string
+  name: string
+  kind: string
+  rule: Record<string, unknown>
+  catch_up_policy: 'startup' | 'immediate' | 'record_only'
+  next_run_at: string | null
+  last_run_at: string | null
+  enabled: boolean
+  priority: number
+  ref_id: number | null
+  note: string
+  /** 依赖后续阶段的类型会标 false —— 界面据此显示"尚未实现"而不是绿灯 */
+  implemented: boolean
+  not_implemented_reason: string
+}
+
+export interface TaskRun {
+  id: number
+  task_id: number | null
+  code: string
+  scheduled_at: string | null
+  started_at: string
+  status: 'success' | 'skipped' | 'failed' | 'caught_up'
+  summary: string
+  error: string
+  /** 软件当时没运行，事后补办的 */
+  caught_up: boolean
+}
+
+export interface TaskHealth {
+  total: number
+  success: number
+  skipped: number
+  failed: number
+  caught_up: number
+  failure_ratio: number | null
+}
+
+export interface PendingPrompt {
+  id: number
+  kind: string
+  title: string
+  body: string
+  blocking_level: 'strong' | 'normal'
+  status: 'pending' | 'snoozed' | 'resolved' | 'skipped'
+  target_kind: string
+  target_id: number | null
+  snooze_count: number
+  max_snooze: number
+  snooze_left: number
+  next_remind_at: string | null
+  skip_reason: string
+  resolved_at: string | null
+}
+
+export interface NotificationItem {
+  id: number
+  level: 'info' | 'success' | 'warn' | 'error'
+  title: string
+  body: string
+  action_path: string
+  action_label: string
+  read: boolean
+  created_at: string | null
 }
 
 // ---- P5：台账与报表 ----------------------------------------------------------

@@ -28,7 +28,9 @@ import { MetricsPage } from '@/pages/Metrics'
 import { GoalsPage } from '@/pages/Goals'
 import { LedgerPage } from '@/pages/Ledger'
 import { PiggyPage } from '@/pages/Piggy'
+import { PayrollPage } from '@/pages/Payroll'
 import { ReportsPage } from '@/pages/Reports'
+import { SchedulerPage } from '@/pages/Scheduler'
 import { BudgetsPage, DebtsPage, RecurringPage } from '@/pages/Planning'
 import { TrashPage } from '@/pages/Trash'
 import { CategoriesPage } from '@/pages/Categories'
@@ -56,6 +58,8 @@ const IMPLEMENTED_ROUTES: Record<string, ReactNode> = {
   '/goals': <GoalsPage />,
   '/ledger': <LedgerPage />,
   '/reports': <ReportsPage />,
+  '/payroll': <PayrollPage />,
+  '/scheduler': <SchedulerPage />,
   '/recurring': <RecurringPage />,
   '/debts': <DebtsPage />,
   '/trash': <TrashPage />,
