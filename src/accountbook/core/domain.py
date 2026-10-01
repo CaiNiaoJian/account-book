@@ -106,3 +106,59 @@ class EntryState(StrEnum):
 #: 转账与余额校准会让"收入/支出"虚高 —— 这是记账软件最常见的口径错误来源，
 #: 因此集中声明，所有统计口径都必须引用它。
 TRANSFER_TYPES: frozenset[TransactionType] = frozenset({TransactionType.TRANSFER, TransactionType.ADJUST})
+
+
+class RecurringFrequency(StrEnum):
+    """周期记账的重复粒度。"""
+
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    YEARLY = "yearly"
+
+
+class BudgetScope(StrEnum):
+    """预算的适用范围。
+
+    ``TOTAL`` 管的是"这个月一共能花多少"，``CATEGORY`` 管的是"这一类能花多少"。
+    两者可以同时存在，也各自独立判断超支。
+    """
+
+    TOTAL = "total"
+    CATEGORY = "category"
+
+
+class BudgetPeriod(StrEnum):
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    QUARTERLY = "quarterly"
+    YEARLY = "yearly"
+    #: 自定义区间。只在 ``period == CUSTOM`` 时才读 ``start_date`` / ``end_date``，
+    #: 避免"月预算却带着一段无关的起止日期"这种自相矛盾的状态
+    CUSTOM = "custom"
+
+
+class DebtKind(StrEnum):
+    """债务方向。以"我"为视角命名，而不是资产/负债 —— 后者容易和账户类型混淆。"""
+
+    LEND = "lend"  # 我借出去（应收）
+    BORROW = "borrow"  # 我借进来（应付）
+
+
+class DebtStatus(StrEnum):
+    ACTIVE = "active"
+    SETTLED = "settled"  # 已结清
+    WRITTEN_OFF = "written_off"  # 已核销（收不回来了）
+
+
+class KlinePeriod(StrEnum):
+    """K 线周期。
+
+    只提供日/周/月/年四档：更细的（分钟级）对本应用没有意义 ——
+    账本记的是"某天花了多少"，不是逐笔行情。
+    """
+
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+    YEAR = "year"

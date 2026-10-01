@@ -216,6 +216,16 @@ def recompute_range(session: Session, start: date, end: date) -> int:
         recomputed += 1
 
     session.flush()
+    # K 线的 OHLC 是 daily_stats 的聚合，因此日结一变它就必须作废。
+    # 这里只作废、不重算：一次改动触发全部周期的重算会明显变慢，
+    # 而实际只会读到用户正在看的那个周期。
+    #
+    # 局部导入是为了打断 daily <-> kline 的循环依赖（kline 需要 daily 保证
+    # 日结新鲜）。这是有意的取舍：两者本来就是互相依赖的关系，
+    # 用一个函数内的导入表达它，比把其中一方拆成第三个模块更直白。
+    from . import kline as kline_service
+
+    kline_service.invalidate(session, start, end)
     return recomputed
 
 

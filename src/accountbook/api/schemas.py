@@ -495,6 +495,208 @@ class CardArtworkOut(BaseModel):
 
 
 # -----------------------------------------------------------------------------
+# P1 收尾：周期记账 / 预算 / 债务
+# -----------------------------------------------------------------------------
+class RecurringRuleCreate(RequestModel):
+    name: str = Field(min_length=1, max_length=64)
+    enabled: bool = True
+    type: Literal["expense", "income", "transfer"] = "expense"
+    account_id: int
+    to_account_id: int | None = None
+    category_id: int | None = None
+    amount_minor: int = Field(default=0, ge=0)
+    currency: str = "CNY"
+    payee: str = Field(default="", max_length=64)
+    note: str = ""
+    frequency: Literal["daily", "weekly", "monthly", "yearly"] = "monthly"
+    interval: int = Field(default=1, ge=1, le=120)
+    #: 每月第几天；-1 表示月末（写成 31 会让 2 月永远不触发）
+    by_month_day: int | None = Field(default=None, ge=-1, le=31)
+    by_weekday: int | None = Field(default=None, ge=0, le=6)
+    start_date: date
+    end_date: date | None = None
+    auto_post: bool = False
+    lead_days: int = Field(default=3, ge=0, le=90)
+
+
+class RecurringRuleUpdate(RequestModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    enabled: bool | None = None
+    type: Literal["expense", "income", "transfer"] | None = None
+    account_id: int | None = None
+    to_account_id: int | None = None
+    category_id: int | None = None
+    amount_minor: int | None = Field(default=None, ge=0)
+    currency: str | None = None
+    payee: str | None = Field(default=None, max_length=64)
+    note: str | None = None
+    frequency: Literal["daily", "weekly", "monthly", "yearly"] | None = None
+    interval: int | None = Field(default=None, ge=1, le=120)
+    by_month_day: int | None = Field(default=None, ge=-1, le=31)
+    by_weekday: int | None = Field(default=None, ge=0, le=6)
+    start_date: date | None = None
+    end_date: date | None = None
+    auto_post: bool | None = None
+    lead_days: int | None = Field(default=None, ge=0, le=90)
+
+
+class RecurringRuleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    enabled: bool
+    type: str
+    account_id: int
+    to_account_id: int | None = None
+    category_id: int | None = None
+    amount_minor: int
+    currency: str
+    payee: str
+    note: str
+    frequency: str
+    interval: int
+    by_month_day: int | None = None
+    by_weekday: int | None = None
+    start_date: date
+    end_date: date | None = None
+    next_due_date: date | None = None
+    last_posted_on: date | None = None
+    auto_post: bool
+    lead_days: int
+    generated_count: int
+
+
+class BudgetCreate(RequestModel):
+    name: str = Field(min_length=1, max_length=64)
+    scope: Literal["total", "category"] = "total"
+    category_id: int | None = None
+    period: Literal["weekly", "monthly", "quarterly", "yearly", "custom"] = "monthly"
+    amount_minor: int = Field(default=0, ge=0)
+    currency: str = "CNY"
+    start_date: date | None = None
+    end_date: date | None = None
+    rollover: bool = False
+    alert_threshold: float = Field(default=0.8, gt=0, le=2)
+    enabled: bool = True
+    note: str = ""
+
+
+class BudgetUpdate(RequestModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    scope: Literal["total", "category"] | None = None
+    category_id: int | None = None
+    period: Literal["weekly", "monthly", "quarterly", "yearly", "custom"] | None = None
+    amount_minor: int | None = Field(default=None, ge=0)
+    currency: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    rollover: bool | None = None
+    alert_threshold: float | None = Field(default=None, gt=0, le=2)
+    enabled: bool | None = None
+    note: str | None = None
+
+
+class BudgetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    scope: str
+    category_id: int | None = None
+    period: str
+    amount_minor: int
+    currency: str
+    start_date: date | None = None
+    end_date: date | None = None
+    rollover: bool
+    carryover_minor: int
+    alert_threshold: float
+    enabled: bool
+    note: str
+
+
+class DebtCreate(RequestModel):
+    name: str = Field(min_length=1, max_length=64)
+    kind: Literal["lend", "borrow"]
+    counterparty: str = Field(default="", max_length=64)
+    principal_minor: int = Field(default=0, ge=0)
+    currency: str = "CNY"
+    account_id: int | None = None
+    mirror_account_id: int | None = None
+    start_date: date
+    due_date: date | None = None
+    annual_rate_bps: int = Field(default=0, ge=0, le=100_000)
+    note: str = ""
+    #: 是否同时建一个应收/应付账户，让这笔钱进入净值
+    create_mirror_account: bool = False
+
+
+class DebtUpdate(RequestModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    kind: Literal["lend", "borrow"] | None = None
+    counterparty: str | None = Field(default=None, max_length=64)
+    principal_minor: int | None = Field(default=None, ge=0)
+    currency: str | None = None
+    account_id: int | None = None
+    mirror_account_id: int | None = None
+    start_date: date | None = None
+    due_date: date | None = None
+    annual_rate_bps: int | None = Field(default=None, ge=0, le=100_000)
+    note: str | None = None
+
+
+class DebtOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    kind: str
+    counterparty: str
+    principal_minor: int
+    currency: str
+    account_id: int | None = None
+    mirror_account_id: int | None = None
+    start_date: date
+    due_date: date | None = None
+    annual_rate_bps: int
+    status: str
+    settled_at: date | None = None
+    note: str
+
+
+class DebtPaymentCreate(RequestModel):
+    amount_minor: int = Field(gt=0)
+    #: 本金与利息都不给时，整笔视为本金 —— 最常见的记账方式，也最保守
+    principal_minor: int | None = Field(default=None, ge=0)
+    interest_minor: int | None = Field(default=None, ge=0)
+    occurred_at: datetime
+    tz_offset_minutes: int = 0
+    account_id: int | None = None
+    note: str = ""
+
+
+class DebtPaymentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    debt_id: int
+    amount_minor: int
+    principal_minor: int
+    interest_minor: int
+    occurred_at: datetime
+    tz_offset_minutes: int
+    account_id: int | None = None
+    transaction_id: int | None = None
+    note: str
+
+
+class SettleRequest(RequestModel):
+    status: Literal["active", "settled", "written_off"] = "settled"
+    on: date | None = None
+
+
+# -----------------------------------------------------------------------------
 # 元数据
 # -----------------------------------------------------------------------------
 class CurrencyOut(BaseModel):

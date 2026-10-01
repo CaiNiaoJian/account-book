@@ -586,3 +586,190 @@ class AuditLog(Base, TimestampMixin):
     changes: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     actor: Mapped[str] = mapped_column(String(32), nullable=False, default="user")
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+# -----------------------------------------------------------------------------
+# P1 收尾：周期记账 / 预算 / 债务
+# -----------------------------------------------------------------------------
+class RecurringRule(Base, TimestampMixin, SoftDeleteMixin):
+    """周期记账规则。
+
+    设计要点
+    --------
+    * **只存"怎么重复"，不预先铺满流水**。把未来 10 年的流水提前写进去是错的：
+      改一次规则就要删掉几千行，而且那些行在被生成之前并不是事实。
+    * `next_due_date` 是**算出来的缓存**，可以随时由规则 + 上次生成日重建。
+      它的存在只是为了让"哪天该提醒"能一次查询拿到，而不是每次全表推算。
+    * `auto_post` 区分两种用法：自动记账（如房租）与仅提醒（如信用卡还款 ——
+      金额每月不同，替你记反而会记错）。
+    """
+
+    __tablename__ = "recurring_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, comment="规则名，如「房租」")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    type: Mapped[str] = mapped_column(String(16), nullable=False, comment="expense/income/transfer")
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False)
+    to_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="CNY")
+    payee: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    frequency: Mapped[str] = mapped_column(String(12), nullable=False, default="monthly")
+    interval: Mapped[int] = mapped_column(Integer, nullable=False, default=1, comment="每 N 个周期一次")
+    #: 每月第几天。``-1`` 表示"月末"—— 直接写 31 会让 2 月永远不触发
+    by_month_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    by_weekday: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="0=周日")
+
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    next_due_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    last_posted_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    auto_post: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    lead_days: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    generated_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class Budget(Base, TimestampMixin, SoftDeleteMixin):
+    """预算。
+
+    ``period`` 决定期间如何切分；``CUSTOM`` 时才读起止日期。
+    ``carryover_minor`` 是**上期结转额**的缓存 —— 由历史期间算出，
+    存起来只是为了避免每次打开界面都回溯全部历史。
+    """
+
+    __tablename__ = "budgets"
+    __table_args__ = (
+        # 同一个适用范围只允许一条启用中的预算：允许两条会导致
+        # "这个月到底按哪个算"永远说不清，而这正是预算最不该含糊的地方
+        Index(
+            "uq_budgets_active_scope",
+            "scope",
+            "category_id",
+            unique=True,
+            sqlite_where=text("deleted_at IS NULL AND enabled = 1"),
+        ),
+        CheckConstraint("scope IN ('total', 'category')", name="scope"),
+        CheckConstraint(
+            "period IN ('weekly', 'monthly', 'quarterly', 'yearly', 'custom')",
+            name="period",
+        ),
+        CheckConstraint("amount_minor >= 0", name="amount"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope: Mapped[str] = mapped_column(String(12), nullable=False, default="total")
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    period: Mapped[str] = mapped_column(String(12), nullable=False, default="monthly")
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="CNY")
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: 未用完的额度是否结转到下一期
+    rollover: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    carryover_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 用掉多少比例开始提醒。默认 80% 而不是 100% —— 等到超支才说就晚了
+    alert_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.8)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class Debt(Base, TimestampMixin, SoftDeleteMixin):
+    """债务 / 债权。
+
+    **同时写入净值**：创建债务时可选地生成一个应收/应付账户
+    （``mirror_account_id``），这样"借出去的钱"会出现在资产里、
+    "欠别人的钱"会出现在负债里 —— 否则用户会觉得"我借出去 5000，
+    净值怎么没变"。
+    """
+
+    __tablename__ = "debts"
+    __table_args__ = (
+        CheckConstraint("kind IN ('lend', 'borrow')", name="kind"),
+        CheckConstraint("status IN ('active', 'settled', 'written_off')", name="status"),
+        CheckConstraint("principal_minor >= 0", name="principal"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False, comment="lend=借出 borrow=借入")
+    counterparty: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    principal_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="CNY")
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    mirror_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id"), nullable=True, comment="承载这笔债务的应收/应付账户"
+    )
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    annual_rate_bps: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="年化利率（基点，1bp = 0.01%）"
+    )
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="active")
+    settled_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class DebtPayment(Base, TimestampMixin):
+    """债务的还款 / 收款记录。
+
+    ``principal_minor`` 与 ``interest_minor`` **分开存**：
+    把本金和利息混成一个数字后，就再也算不出"还剩多少本金"，
+    而这正是债务最核心的一个数。
+    """
+
+    __tablename__ = "debt_payments"
+    __table_args__ = (CheckConstraint("amount_minor >= 0", name="amount"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    debt_id: Mapped[int] = mapped_column(ForeignKey("debts.id"), nullable=False, index=True)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    principal_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    interest_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 业务时间（本地墙上时钟），与流水保持同一套语义
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    tz_offset_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transactions.id"), nullable=True, comment="同时记的那笔流水"
+    )
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+# -----------------------------------------------------------------------------
+# P3：K 线聚合缓存
+# -----------------------------------------------------------------------------
+class AssetOhlc(Base, TimestampMixin):
+    """净值 K 线聚合缓存。
+
+    为什么可以做成缓存：它的每一个数字都能由 ``asset_snapshots`` 推出。
+    因此脏标记与 ``daily_stats`` 共用一套 —— 重算日结时顺手删掉重叠的 OHLC 行，
+    下次读取自然重算。多一层缓存不增加"口径分叉"的风险，
+    因为这里没有任何新的口径，只有聚合。
+    """
+
+    __tablename__ = "asset_ohlc"
+    __table_args__ = (
+        UniqueConstraint("period", "period_start", name="uq_asset_ohlc_period_start"),
+        CheckConstraint("period IN ('day', 'week', 'month', 'year')", name="period"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    period: Mapped[str] = mapped_column(String(8), nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    #: 周期结束日（含）。周/月/年的最后一根 K 线可能不足整期，用它标记真实边界
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    open_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    high_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    low_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    close_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: "成交量"：周期内的资金流动总额（收入 + 支出）。它不是金额余额，
+    #: 而是"这个周期里有多少钱动过" —— 与 K 线图的成交量含义对应
+    volume_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tx_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utc_now)
