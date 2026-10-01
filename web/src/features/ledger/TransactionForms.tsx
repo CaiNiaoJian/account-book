@@ -207,6 +207,70 @@ export function QuickAddDialog({ open, onClose, onSaved }: QuickAddDialogProps) 
   const controller = useTransactionDraft()
   const { draft, setDraft, busy, error, canSubmit, submit } = controller
   const [amountText, setAmountText] = useState('')
+  // 模板与解析：把"每天都要记的那几笔"变成一次点击。
+  // 模板按最常用排序（服务端已排好），因此这里不再排序。
+  const [templates, setTemplates] = useState<Awaited<ReturnType<typeof api.templates>>>([])
+  const [parseText, setParseText] = useState('')
+  const [parseNote, setParseNote] = useState('')
+
+  useEffect(() => {
+    if (!open) return
+    // 拉不到模板不该让对话框打不开：失败时当成"还没有模板"
+    api
+      .templates()
+      .then(setTemplates)
+      .catch(() => setTemplates([]))
+  }, [open])
+
+  const applyTemplate = (item: Awaited<ReturnType<typeof api.templates>>[number]) => {
+    setDraft((previous) => ({
+      ...previous,
+      type: item.type,
+      accountId: item.account_id ?? previous.accountId,
+      toAccountId: item.to_account_id ?? previous.toAccountId,
+      categoryId: item.type === 'transfer' ? null : item.category_id,
+      amountMinor: item.amount_minor,
+      payee: item.payee,
+      note: item.note,
+      tagIds: item.tag_ids,
+      splits: [],
+    }))
+    setAmountText(item.amount_minor === null ? '' : (item.amount_minor / 100).toFixed(2))
+    setParseNote(t('templates.applied', { name: item.name }))
+  }
+
+  const runParse = async () => {
+    const source = parseText.trim()
+    if (!source) return
+    setParseNote('')
+    try {
+      const result = await api.parseText(source)
+      setDraft((previous) => ({
+        ...previous,
+        // 方向为 null 时保持用户当前的选择，而不是猜一个
+        type: (result.type as TransactionType | null) ?? previous.type,
+        accountId: result.account_id ?? previous.accountId,
+        categoryId: result.category_id ?? previous.categoryId,
+        amountMinor: result.amount_minor ?? previous.amountMinor,
+        payee: result.payee || previous.payee,
+        splits: [],
+      }))
+      if (result.amount_minor !== null && result.amount_minor !== undefined) {
+        setAmountText((result.amount_minor / 100).toFixed(2))
+      }
+      const bits: string[] = []
+      if (result.matched.account) bits.push(t('templates.matchedAccount', { value: result.matched.account }))
+      if (result.matched.category) bits.push(t('templates.matchedCategory', { value: result.matched.category }))
+      // 认不出的词必须显示出来 —— 静默丢弃会让人以为都识别到了
+      if (result.unmatched.length > 0) bits.push(t('templates.unmatched', { words: result.unmatched.join('、') }))
+      if (!result.type) bits.push(t('templates.needType'))
+      if (result.amount_minor === null || result.amount_minor === undefined) bits.push(t('templates.needAmount'))
+      setParseNote(bits.length > 0 ? bits.join(' · ') : t('templates.parsed'))
+    } catch (cause) {
+      setParseNote(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
   const amountRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -258,6 +322,50 @@ export function QuickAddDialog({ open, onClose, onSaved }: QuickAddDialogProps) 
       }
     >
       <div className="space-y-3.5">
+        {/* 模板与文本解析 */}
+        <div className="space-y-2">
+          {templates.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {templates.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="ab-chip"
+                  onClick={() => applyTemplate(item)}
+                >
+                  {item.name}
+                  {item.amount_minor === null ? (
+                    <span className="text-label-3">{t('templates.structureOnly')}</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="flex gap-1.5">
+            <input
+              className="ab-input flex-1"
+              placeholder={t('templates.parsePlaceholder')}
+              value={parseText}
+              onChange={(event) => setParseText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  void runParse()
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="ab-btn-secondary shrink-0"
+              disabled={!parseText.trim()}
+              onClick={() => void runParse()}
+            >
+              <Icon name="quickAdd" size={13} />
+              {t('templates.parse')}
+            </button>
+          </div>
+          {parseNote ? <p className="text-ab-caption1 text-label-3">{parseNote}</p> : null}
+        </div>
         {/* 支出 / 收入 / 转账 */}
         <div className="ab-segment">
           {(['expense', 'income', 'transfer'] as TransactionType[]).map((type) => (

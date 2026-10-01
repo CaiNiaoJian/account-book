@@ -734,6 +734,18 @@ export const enUS = {
       notAdvice: 'Indicators are descriptive only and are not investment advice.',
     },
   },
+  templates: {
+    parse: 'Parse',
+    parsePlaceholder: 'Paste or type, e.g. yesterday supermarket 128.5 Alipay',
+    applied: 'Template "{name}" applied — confirm to save',
+    parsed: 'Parsed — confirm to save',
+    matchedAccount: 'Account: {value}',
+    matchedCategory: 'Category: {value}',
+    unmatched: 'Not recognised: {words}',
+    needType: 'Direction unclear — pick expense or income',
+    needAmount: 'Amount not recognised — please fill it in',
+    structureOnly: 'structure',
+  },
   design: {
     iconGroup: {
       food: 'Food',

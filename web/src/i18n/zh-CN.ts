@@ -714,6 +714,18 @@ export const zhCN = {
       notAdvice: '指标只做描述，不构成任何投资建议。',
     },
   },
+  templates: {
+    parse: '解析',
+    parsePlaceholder: '粘贴或输入，例如：昨天 永辉超市 128.5 支付宝',
+    applied: '已套用模板「{name}」，确认后保存',
+    parsed: '已解析，请确认后保存',
+    matchedAccount: '账户：{value}',
+    matchedCategory: '分类：{value}',
+    unmatched: '未识别：{words}',
+    needType: '方向未定，请选择支出或收入',
+    needAmount: '金额未识别，请填写',
+    structureOnly: '结构',
+  },
   design: {
     iconGroup: {
       food: '餐饮',

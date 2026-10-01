@@ -43,6 +43,9 @@ export function KlinePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [compareStart, setCompareStart] = useState<string | null>(null)
+  // 事件打点：图表上的"为什么这天净值跳了"往往要到事件日志里才找得到答案，
+  // 把它直接标在蜡烛上，看图的人就不用再切页面
+  const [events, setEvents] = useState<{ date: string; kind: string; title: string }[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -59,6 +62,25 @@ export function KlinePage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // 事件的区间取决于后端实际返回的 start/end（而不是本地猜一个），
+  // 这样降采样或补数据之后打点仍然落在正确的蜡烛上
+  useEffect(() => {
+    if (!data) return
+    let cancelled = false
+    api
+      .events(data.start, data.end)
+      .then((rows) => {
+        if (!cancelled) setEvents(rows.map((row) => ({ date: row.date, kind: row.kind, title: row.title })))
+      })
+      .catch(() => {
+        // 事件拉不到不该让整张图消失：打点本来就是附加信息
+        if (!cancelled) setEvents([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [data])
 
   const bars = data?.bars ?? []
 
@@ -121,6 +143,35 @@ export function KlinePage() {
             color0: negative,
             borderColor: positive,
             borderColor0: negative,
+          },
+          markPoint: {
+            symbol: 'pin',
+            symbolSize: 22,
+            itemStyle: { color: resolveToken('warning'), opacity: 0.9 },
+            label: { fontSize: 9, color: '#fff' },
+            // 只标"有标题"的事件：空标题的事件打上去只是一个没有信息的图钉
+            data: events
+              .filter((event) => event.title.trim().length > 0)
+              .slice(0, 40)
+              // 纵坐标取那根蜡烛的最高价：markPoint 需要一个真实坐标，
+              // 给 null 的话点会落到轴底部或者根本不画。
+              // 找不到对应蜡烛的事件直接丢掉 —— 宁可不标，也不要标错位置。
+              .flatMap((event) => {
+                const bar = bars.find(
+                  (item) => event.date >= item.period_start && event.date <= item.period_end,
+                )
+                if (!bar) return []
+                return [
+                  {
+                    name: event.title,
+                    coord: [bar.period_start, bar.high_minor / 100],
+                    value: event.title.slice(0, 4),
+                  },
+                ]
+              }),
+            tooltip: {
+              formatter: (params: { name?: string }) => params.name ?? '',
+            },
           },
         },
         ...windows.map((window, index) => ({

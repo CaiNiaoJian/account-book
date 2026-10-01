@@ -1009,4 +1009,62 @@ export const api = {
     request<KlineResponse>(`/api/kline${query(params)}`),
   /** 指标参数。口径说明页直接渲染它，参数一改说明页自动跟着变 */
   klineParams: () => request<KlineParams>('/api/kline/params'),
+
+  // ---- P1 收尾：记账模板与文本解析 ------------------------------------------
+  /** 模板列表。服务端已按"最常用"排好序，前端不要再排 */
+  templates: () => request<TemplateItem[]>('/api/templates'),
+  createTemplate: (payload: Record<string, unknown>) =>
+    request<TemplateItem>('/api/templates', { method: 'POST', body: JSON.stringify(payload) }),
+  updateTemplate: (id: number, payload: Record<string, unknown>) =>
+    request<TemplateItem>(`/api/templates/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteTemplate: (id: number) => request<void>(`/api/templates/${id}`, { method: 'DELETE' }),
+  /** 套用模板：返回草稿并累加使用次数，**不直接创建流水** */
+  applyTemplate: (id: number) =>
+    request<TemplateItem>(`/api/templates/${id}/apply`, { method: 'POST' }),
+  /**
+   * 解析一段文本成记账草稿。
+   *
+   * `unmatched` 是契约的一部分：界面**必须**显示它，
+   * 静默丢弃会让人以为所有内容都被识别到了。
+   */
+  parseText: (text: string) =>
+    request<ParsedDraft>('/api/templates/parse', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+}
+
+export interface TemplateItem {
+  id: number
+  name: string
+  type: 'expense' | 'income' | 'transfer'
+  account_id: number | null
+  to_account_id: number | null
+  category_id: number | null
+  /** null 表示"只填结构，金额每次手输" */
+  amount_minor: number | null
+  currency: string
+  payee: string
+  note: string
+  tag_ids: number[]
+  project_id: number | null
+  member_id: number | null
+  sort_order: number
+  usage_count: number
+  last_used_at: string | null
+}
+
+export interface ParsedDraft {
+  /** null 表示无法判断方向 —— 此时不猜，由用户选择 */
+  type: 'expense' | 'income' | 'transfer' | null
+  amount_minor: number | null
+  occurred_at: string | null
+  account_id: number | null
+  category_id: number | null
+  payee: string
+  note: string
+  currency: string
+  matched: Record<string, string>
+  unmatched: string[]
+  raw: string
 }

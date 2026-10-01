@@ -697,6 +697,82 @@ class SettleRequest(RequestModel):
 
 
 # -----------------------------------------------------------------------------
+# P1 收尾：记账模板与文本解析
+# -----------------------------------------------------------------------------
+class TemplateCreate(RequestModel):
+    name: str = Field(min_length=1, max_length=48)
+    type: Literal["expense", "income", "transfer"] = "expense"
+    account_id: int | None = None
+    to_account_id: int | None = None
+    category_id: int | None = None
+    #: 为空表示"只填结构，金额每次手输"
+    amount_minor: int | None = Field(default=None, ge=0)
+    currency: str = "CNY"
+    payee: str = Field(default="", max_length=64)
+    note: str = ""
+    tag_ids: list[int] = Field(default_factory=list)
+    project_id: int | None = None
+    member_id: int | None = None
+    sort_order: int = 0
+
+
+class TemplateUpdate(RequestModel):
+    name: str | None = Field(default=None, min_length=1, max_length=48)
+    type: Literal["expense", "income", "transfer"] | None = None
+    account_id: int | None = None
+    to_account_id: int | None = None
+    category_id: int | None = None
+    amount_minor: int | None = Field(default=None, ge=0)
+    currency: str | None = None
+    payee: str | None = Field(default=None, max_length=64)
+    note: str | None = None
+    tag_ids: list[int] | None = None
+    project_id: int | None = None
+    member_id: int | None = None
+    sort_order: int | None = None
+
+
+class TemplateOut(BaseModel):
+    id: int
+    name: str
+    type: str
+    account_id: int | None = None
+    to_account_id: int | None = None
+    category_id: int | None = None
+    amount_minor: int | None = None
+    currency: str
+    payee: str
+    note: str
+    tag_ids: list[int] = Field(default_factory=list)
+    project_id: int | None = None
+    member_id: int | None = None
+    sort_order: int
+    usage_count: int
+    last_used_at: str | None = None
+
+
+class ParseTextRequest(RequestModel):
+    text: str = Field(min_length=1, max_length=500)
+
+
+class ParseTextResult(BaseModel):
+    """解析结果。``unmatched`` 是契约的一部分：界面必须显示它。"""
+
+    #: 认不出来时给 null，界面让用户自己选 —— 猜错方向会让支出变收入
+    type: str | None = None
+    amount_minor: int | None = None
+    occurred_at: datetime | None = None
+    account_id: int | None = None
+    category_id: int | None = None
+    payee: str = ""
+    note: str = ""
+    currency: str = "CNY"
+    matched: dict[str, Any] = Field(default_factory=dict)
+    unmatched: list[str] = Field(default_factory=list)
+    raw: str = ""
+
+
+# -----------------------------------------------------------------------------
 # 元数据
 # -----------------------------------------------------------------------------
 class CurrencyOut(BaseModel):

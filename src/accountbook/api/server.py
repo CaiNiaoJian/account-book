@@ -41,6 +41,7 @@ from .routes import planning as planning_routes
 from .routes import stats as stats_routes
 from .routes import system as system_routes
 from .routes import taxonomy as taxonomy_routes
+from .routes import templates as templates_routes
 from .routes import transactions as transactions_routes
 from .state import AppContext, context_of
 
@@ -172,6 +173,7 @@ def create_app(ctx: AppContext) -> FastAPI:
     app.include_router(calendar_routes.router)
     app.include_router(assets_routes.router)
     app.include_router(planning_routes.router)
+    app.include_router(templates_routes.router)
     app.include_router(kline_routes.router)
 
     # ---- 前端托管（必须最后注册，因为它是通配路由） -------------------------

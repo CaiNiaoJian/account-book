@@ -773,3 +773,41 @@ class AssetOhlc(Base, TimestampMixin):
     volume_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tx_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utc_now)
+
+
+# -----------------------------------------------------------------------------
+# P1 收尾：记账模板
+# -----------------------------------------------------------------------------
+class TransactionTemplate(Base, TimestampMixin, SoftDeleteMixin):
+    """记账模板（快捷记账的"常用组合"）。
+
+    存的是**一整套字段**而不是"只存差异"：模板的用途就是"一键填完整个表单"，
+    如果只存差异，用户还得自己补齐剩下的字段，那就没省下什么。
+
+    ``tag_ids`` 用 JSON 数组：标签是个短列表，且**只在套用模板时整体读取**，
+    为它单开一张关联表会让"套用模板"变成三次查询，而收益只是理论上的规范化。
+    真要做标签统计时，走的是 ``transaction_tags``，与这里无关。
+    """
+
+    __tablename__ = "transaction_templates"
+    __table_args__ = (CheckConstraint("type IN ('expense', 'income', 'transfer')", name="type"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(48), nullable=False)
+    type: Mapped[str] = mapped_column(String(16), nullable=False, default="expense")
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    to_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    amount_minor: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="为空表示只填结构，金额每次手输"
+    )
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default=DEFAULT_CURRENCY)
+    payee: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    tag_ids: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id"), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 使用次数与最近使用时间：模板栏按"最常用"排序比按创建时间更符合直觉
+    usage_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
