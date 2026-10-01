@@ -15,12 +15,21 @@
  */
 
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, PieChart, TreemapChart } from 'echarts/charts'
+import {
+  BarChart,
+  BoxplotChart,
+  LineChart,
+  PieChart,
+  RadarChart,
+  SunburstChart,
+  TreemapChart,
+} from 'echarts/charts'
 import {
   DatasetComponent,
   GridComponent,
   LegendComponent,
   MarkLineComponent,
+  RadarComponent,
   TitleComponent,
   TooltipComponent,
 } from 'echarts/components'
@@ -30,15 +39,21 @@ import { useEffect, useRef } from 'react'
 import { useTheme } from '@/app/preferences'
 import { chartPalette, resolveToken } from '@/design/tokens'
 
+// 只注册用到的图表与组件：ECharts 全量引入会让分包从 ~580KB 涨到 1MB+，
+// 而这里每种图表都对应界面上一个具体位置，多注册一种就该多一个用途。
 echarts.use([
   BarChart,
+  BoxplotChart,
   LineChart,
   PieChart,
+  RadarChart,
+  SunburstChart,
   TreemapChart,
   DatasetComponent,
   GridComponent,
   LegendComponent,
   MarkLineComponent,
+  RadarComponent,
   TitleComponent,
   TooltipComponent,
   CanvasRenderer,

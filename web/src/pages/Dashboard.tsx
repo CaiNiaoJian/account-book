@@ -16,10 +16,11 @@
  * 会让月支出凭空翻倍，这是记账软件最常见的口径错误。
  */
 
-import { motion } from 'framer-motion'
+import { Reorder, motion } from 'framer-motion'
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { CountUp } from '@/components/CountUp'
 import { Icon, type IconName } from '@/components/Icon'
 import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { staggerContainer, staggerItem } from '@/design/motion'
@@ -38,7 +39,10 @@ interface MetricProps {
   label: string
   icon: IconName
   tone: 'accent' | 'positive' | 'negative' | 'purple'
+  /** 已格式化好的文本；当 `minor` 存在时改用 CountUp 呈现原始金额 */
   value: string
+  /** 原始金额（最小单位）。提供后数字会滚动过渡，让「变了多少」可见 */
+  minor?: number
   delta?: number | null
   hint?: string
 }
@@ -49,7 +53,7 @@ interface MetricProps {
  * 环比为 `null` 时显示 `—` 而不是 0% 或 +100%：
  * "上期是 0，这期是 500"在数学上没有变化率，编一个出来是骗人。
  */
-function MetricCard({ label, icon, tone, value, delta, hint }: MetricProps) {
+function MetricCard({ label, icon, tone, value, minor, delta, hint }: MetricProps) {
   return (
     <motion.div variants={staggerItem}>
       <Card dense className="h-full">
@@ -77,7 +81,9 @@ function MetricCard({ label, icon, tone, value, delta, hint }: MetricProps) {
             </span>
           ) : null}
         </div>
-        <div className="ab-metric mt-2.5">{value}</div>
+        <div className="ab-metric mt-2.5">
+          {minor === undefined ? value : <CountUp value={minor} />}
+        </div>
         {hint ? <div className="mt-0.5 text-ab-caption1 text-label-3">{hint}</div> : null}
       </Card>
     </motion.div>
@@ -91,6 +97,33 @@ export function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+
+  /**
+   * 仪表盘分区顺序。
+   *
+   * 存在**用户偏好**里而不是 localStorage：偏好已经有一条可靠的读写链路
+   * （后端校验 + 原子写入），而 localStorage 会随浏览器缓存被清掉，
+   * 且原生窗口与浏览器两种外壳下并不共享。布局这种事丢了会让人恼火。
+   *
+   * 只允许"重新排序"，不允许删除或新增分区 —— 一个能被拖空的仪表盘
+   * 会让用户以为自己把功能弄丢了。
+   */
+  const DEFAULT_LAYOUT = ['charts', 'lists', 'status']
+  const [layout, setLayout] = useState<string[]>(DEFAULT_LAYOUT)
+
+  useEffect(() => {
+    const saved = (preferences as unknown as { dashboard_layout?: unknown }).dashboard_layout
+    if (Array.isArray(saved) && saved.length === DEFAULT_LAYOUT.length) {
+      setLayout(saved.filter((item): item is string => typeof item === 'string'))
+    }
+    // 只在偏好首次就绪时套用，之后以本地状态为准（否则拖拽会被回写覆盖）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferences.dashboard_layout])
+
+  const persistLayout = useCallback((next: string[]) => {
+    setLayout(next)
+    void api.patchPreferences({ dashboard_layout: next } as never)
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -156,6 +189,7 @@ export function DashboardPage() {
           icon="accounts"
           tone="accent"
           value={displayMinor(data.net_worth.net_worth_minor, 'CNY', preferences.privacy_mode)}
+          minor={data.net_worth.net_worth_minor}
           hint={t('dashboard.assetsHint', {
             assets: compactMinor(data.net_worth.assets_minor),
             liabilities: compactMinor(data.net_worth.liabilities_minor),
@@ -166,6 +200,7 @@ export function DashboardPage() {
           icon="transactions"
           tone="negative"
           value={displayMinor(data.month.expense_minor, 'CNY', preferences.privacy_mode)}
+          minor={data.month.expense_minor}
           delta={data.month.expense_change}
           hint={t('dashboard.monthRecords', { count: data.month.transaction_count })}
         />
@@ -174,6 +209,7 @@ export function DashboardPage() {
           icon="salary"
           tone="positive"
           value={displayMinor(data.month.income_minor, 'CNY', preferences.privacy_mode)}
+          minor={data.month.income_minor}
           delta={data.month.income_change}
         />
         <MetricCard
@@ -181,6 +217,7 @@ export function DashboardPage() {
           icon="budgets"
           tone="purple"
           value={displayMinor(data.month.net_minor, 'CNY', preferences.privacy_mode)}
+          minor={data.month.net_minor}
         />
       </motion.div>
 
@@ -200,7 +237,8 @@ export function DashboardPage() {
         </Card>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <Reorder.Group axis="y" values={layout} onReorder={persistLayout} className="space-y-4">
+      <Reorder.Item value="charts" className="grid gap-4 xl:grid-cols-3">
         {/* 近 30 天趋势 */}
         <Card className="xl:col-span-2" title={t('dashboard.trendTitle')}>
           <div className="flex items-center gap-3 text-ab-caption text-label-3">
@@ -286,9 +324,9 @@ export function DashboardPage() {
             </div>
           )}
         </Card>
-      </div>
+      </Reorder.Item>
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <Reorder.Item value="lists" className="grid gap-4 xl:grid-cols-3">
         {/* 最近流水 */}
         <Card
           className="xl:col-span-2"
@@ -382,9 +420,12 @@ export function DashboardPage() {
             ))
           )}
         </Card>
-      </div>
+      </Reorder.Item>
 
-      <RunStatusCard onReload={() => void Promise.all([load(), refreshLedger()])} />
+      <Reorder.Item value="status">
+        <RunStatusCard onReload={() => void Promise.all([load(), refreshLedger()])} />
+      </Reorder.Item>
+      </Reorder.Group>
     </div>
   )
 }

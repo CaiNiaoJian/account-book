@@ -466,7 +466,40 @@ export const enUS = {
     backfillTitle: 'Nothing recorded for this day',
     backfillBody: 'Add one entry and it will show up on the calendar.',
   },
-  design: {
+  stats: {
+    span: { '3m': 'Last 3 months', '6m': 'Last 6 months', '12m': 'Last 12 months', ytd: 'Year to date' },
+    rangeSummary: 'Income {income} · Expense {expense} in range',
+    net: 'Net',
+    currencyUnit: 'CNY',
+    loadFailed: 'Could not load statistics',
+    emptyTitle: 'Not enough data yet',
+    emptyBody: 'Record a few entries and this page will start showing your income and spending structure.',
+    noExpense: 'No spending in this range',
+    noExpenseBody: 'These charts need at least one expense record.',
+    netWorthTrend: 'Net worth trend',
+    monthlyCompare: 'Monthly income vs expense',
+    waterfall: 'Cash flow waterfall',
+    compositionDonut: 'Where it went (donut)',
+    compositionTreemap: 'Where it went (treemap)',
+    compositionSunburst: 'Where it went (sunburst, two levels)',
+    sunburstHint:
+      'The inner ring is top-level categories and the outer ring is subcategories — the hierarchy comes from the real category tree, not from forcing flat data into two levels.',
+    assetStructure: 'Asset structure',
+    expenseByWeekday: 'Spending by weekday',
+    boxplotHint:
+      'Boxplot of daily spending per weekday: the middle line is the median, the box is the 25–75th percentile, the whiskers are the 5–95th.',
+    financialProfile: 'Financial profile',
+    profile: 'Current range',
+    profileHint:
+      'All five dimensions are computed from existing data with no subjective scoring, and all point the same way (higher is better) — otherwise the shape would lead to the opposite conclusion.',
+    dim: {
+      saving: 'Saving rate',
+      coverage: 'Recording coverage',
+      stability: 'Spending stability',
+      balance: 'Category balance',
+      liquidity: 'Asset liquidity',
+    },
+  },  design: {
     iconGroup: {
       food: 'Food',
       transport: 'Transport',

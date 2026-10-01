@@ -34,6 +34,8 @@ export interface Preferences {
   privacy_mode: boolean
   sidebar_collapsed: boolean
   sidebar_order: string[]
+  /** 仪表盘分区顺序（空数组 = 用内置默认顺序） */
+  dashboard_layout: string[]
   window: {
     width: number
     height: number
@@ -76,6 +78,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   privacy_mode: false,
   sidebar_collapsed: false,
   sidebar_order: [],
+  dashboard_layout: [],
   window: { width: 1320, height: 880, x: null, y: null, maximized: false },
   last_version: '',
   first_run_completed: false,

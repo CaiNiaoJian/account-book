@@ -27,6 +27,7 @@ import { CategoriesPage } from '@/pages/Categories'
 import { DashboardPage } from '@/pages/Dashboard'
 import { PlaceholderPage } from '@/pages/Placeholder'
 import { SettingsPage } from '@/pages/Settings'
+import { StatisticsPage } from '@/pages/Statistics'
 import { TagsProjectsPage } from '@/pages/TagsProjects'
 import { TransactionsPage } from '@/pages/Transactions'
 
@@ -39,6 +40,7 @@ const IMPLEMENTED_ROUTES: Record<string, ReactNode> = {
   '/categories': <CategoriesPage />,
   '/cards': <CardsPage />,
   '/calendar': <CalendarPage />,
+  '/statistics': <StatisticsPage />,
   '/tags': <TagsProjectsPage />,
   '/settings': <SettingsPage />,
   '/about': <AboutPage />,

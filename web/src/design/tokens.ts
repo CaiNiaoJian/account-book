@@ -69,6 +69,12 @@ export type TokenName =
   | 'mint'
   | 'orange'
   | 'yellow'
+  // 分类与机构主色引用的补充色（种子数据里已在用）
+  | 'red'
+  | 'green'
+  | 'blue'
+  | 'brown'
+  | 'gray'
 
 /** 图表分类色序（P2 起被 ECharts 主题直接消费） */
 export const CHART_SERIES_TOKENS: TokenName[] = [

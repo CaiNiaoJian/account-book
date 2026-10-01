@@ -53,6 +53,12 @@ export default {
         mint: 'rgb(var(--ab-mint) / <alpha-value>)',
         orange: 'rgb(var(--ab-orange) / <alpha-value>)',
         yellow: 'rgb(var(--ab-yellow) / <alpha-value>)',
+        // 分类/机构主色会引用这五个名字；不注册的话 g-red 这类类名不会生成
+        red: 'rgb(var(--ab-red) / <alpha-value>)',
+        green: 'rgb(var(--ab-green) / <alpha-value>)',
+        blue: 'rgb(var(--ab-blue) / <alpha-value>)',
+        brown: 'rgb(var(--ab-brown) / <alpha-value>)',
+        gray: 'rgb(var(--ab-gray) / <alpha-value>)',
       },
 
       // ---- 透明度：补齐本项目实际使用的档位 ----

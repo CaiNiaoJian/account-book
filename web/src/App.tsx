@@ -13,6 +13,7 @@
  * 流水列表**刻意不放进全局**：它是分页且带筛选的页面级状态。
  */
 
+import { MotionConfig } from 'framer-motion'
 import { RouterProvider, createBrowserRouter } from 'react-router-dom'
 
 import { PreferencesProvider } from '@/app/preferences'
@@ -28,9 +29,11 @@ function LocalizedApp() {
   const { preferences } = usePreferences()
   return (
     <I18nProvider language={preferences.language}>
-      <LedgerProvider>
-        <RouterProvider router={router} />
-      </LedgerProvider>
+      <MotionConfig reducedMotion={preferences.reduce_motion ? 'always' : 'never'}>
+        <LedgerProvider>
+          <RouterProvider router={router} />
+        </LedgerProvider>
+      </MotionConfig>
     </I18nProvider>
   )
 }

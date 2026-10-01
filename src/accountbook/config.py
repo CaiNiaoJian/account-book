@@ -154,6 +154,9 @@ class UserPreferences(BaseModel):
     # 侧边栏折叠状态与顺序（前端读写；后端仅做持久化，不解释其内部结构）
     sidebar_collapsed: bool = False
     sidebar_order: list[str] = Field(default_factory=list)
+    #: 仪表盘分区顺序（P2 可拖拽仪表盘）。与 sidebar_order 同样的处理方式：
+    #: 空列表表示用内置默认顺序。
+    dashboard_layout: list[str] = Field(default_factory=list)
 
     window: WindowState = Field(default_factory=WindowState)
 
