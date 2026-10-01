@@ -23,6 +23,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 
 import { Icon } from '@/components/Icon'
 import { Card, EmptyState, Kbd, Skeleton } from '@/components/ui'
+import { useVirtualWindow } from '@/components/VirtualList'
 import { staggerContainer, staggerItem } from '@/design/motion'
 import { useI18n } from '@/i18n'
 import {
@@ -640,7 +641,12 @@ function TransactionRow({
   const signed = item.type === 'expense' ? -item.amount_minor : item.amount_minor
 
   return (
-    <div
+    <motion.div
+      // FLIP：批量删除、切换筛选导致列表增删时，行会平滑地移动而不是瞬移。
+      // 只加 layout 不加 variants —— 后者需要父级驱动 initial/animate，
+      // 而这个列表的父级是分组容器，没有那一层（卡片墙上踩过这个坑）。
+      layout
+      transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
       className={`ab-row group ${selectable ? 'cursor-pointer' : ''} ${selected ? 'bg-accent/8' : ''}`}
       {...(selectable
         ? {
@@ -734,7 +740,7 @@ function TransactionRow({
           </button>
         </div>
       </div>
-    </div>
+    </motion.div>
   )
 }
 
@@ -754,17 +760,32 @@ function TimelineView({
 }) {
   const { t } = useI18n()
   const { preferences } = usePreferences()
+  /**
+   * 虚拟滚动。
+   *
+   * 时间轴视图原本把**已加载的全部流水**一次渲染出来 —— 用户点几次
+   * 「加载更多」之后 DOM 就没有上界了。这里只渲染可见区（加 overscan），
+   * 滚动位置用一个撑高的占位块维持。
+   *
+   * 行高是**测量**出来的而不是写死的：带标签或备注的行更高，
+   * 写死估计值会让滚动位置逐渐错位，而那种错位很容易被误认为"滚动卡了"。
+   */
+  const vw = useVirtualWindow(items.length, { estimate: 64 })
 
   return (
-    <Card>
-      <div className="relative pl-6">
-        {/* 竖线：时间轴的视觉锚点 */}
+    <Card flush>
+      <div ref={vw.attach} data-virtual-scroll className="relative max-h-[68vh] overflow-y-auto pl-6">
+        {/* 竖线：时间轴的视觉锚点。它必须随内容滚动，因此在滚动容器**内部** */}
         <span className="absolute bottom-2 left-[9px] top-2 w-px bg-separator" aria-hidden />
-        <div className="space-y-3">
-          {items.map((item) => {
+        <div style={{ paddingTop: vw.paddingTop, paddingBottom: vw.paddingBottom }}>
+          {items.slice(vw.start, vw.end).map((item, offset) => {
             const category = categoryOf(item.category_id)
             return (
-              <div key={item.id} className="relative">
+              <div
+                key={item.id}
+                ref={vw.measure(vw.start + offset)}
+                className="relative pb-3"
+              >
                 <span
                   className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface"
                   style={{
