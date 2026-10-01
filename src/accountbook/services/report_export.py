@@ -350,18 +350,32 @@ def _svg_chart(block: dict[str, Any], currency: str) -> str:
             f'text-anchor="end">{html.escape(labels[-1])}</text></svg>'
         )
 
-    # 柱状
-    hi = max(values) if values else 1
-    hi = hi if hi > 0 else 1
+    # 柱状。**必须支持负值**：应发实发瀑布里的减项就是负的，
+    # 早先按 `max(0, value)` 算高度，结果所有减项都画成 0 高度、
+    # 一根柱子都看不见，而导出的 HTML 看起来像"图表加载失败"。
+    positive = [value for value in values if value > 0]
+    negative = [value for value in values if value < 0]
+    hi = max(positive) if positive else 1
+    lo = min(negative) if negative else 0
+    span = (hi - lo) or 1
+    plot = height - pad_top - pad_bottom
+    # 零线：正值向上、负值向下，都从这里出发
+    zero_y = pad_top + plot * (hi / span)
     slot = (width - pad_left * 2) / max(1, len(values))
     bars = []
     for index, value in enumerate(values):
-        bar_height = (height - pad_top - pad_bottom) * (max(0.0, value) / hi)
+        magnitude = plot * (abs(value) / span)
         x = pad_left + index * slot + slot * 0.15
-        y = height - pad_bottom - bar_height
+        y = zero_y - magnitude if value >= 0 else zero_y
+        tone = "#0a84ff" if value >= 0 else "#c0392b"
         bars.append(
-            f'<rect x="{x:.1f}" y="{y:.1f}" width="{slot * 0.7:.1f}" height="{bar_height:.1f}" '
-            f'rx="2" fill="#0a84ff" />'
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{slot * 0.7:.1f}" '
+            f'height="{max(1.0, magnitude):.1f}" rx="2" fill="{tone}" />'
+        )
+    if lo < 0:
+        bars.append(
+            f'<line x1="{pad_left}" y1="{zero_y:.1f}" x2="{width - pad_left}" y2="{zero_y:.1f}" '
+            f'stroke="#8e8e93" stroke-width="1" stroke-dasharray="3 3" />'
         )
     return (
         f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" '

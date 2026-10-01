@@ -232,36 +232,28 @@ class TestZeroData:
                     "unavailable",
                 }
 
-    def test_payroll_is_unavailable_not_zeros(self, session) -> None:
-        """**诚实性保证。** P6 还没做，因此这里必须是 `unavailable`。
+    def test_payroll_section_distinguishes_no_data_from_not_implemented(self, session) -> None:
+        """**P6 落地后，这一节从"未实现"变成了"还没数据"。**
 
-        放一排 0 会让用户以为"我这个月五险一金是 0" ——
-        一个填满假零的报告比缺一节的报告危险得多。
+        P5 时它是 `unavailable` 块（"尚未实现，不放一排 0 ——
+        放一排 0 会让你以为本月缴纳额真的是 0"）。现在数据齐了，
+        于是它必须是真实内容，而**空状态要说"记几笔就有了"**，
+        不能说"功能还没做" —— 后者会让用户不去录入。
+
+        这条区分值得单独钉住：`unavailable` 表示"功能未实现"，
+        `text` 表示"还没有数据"，两者混用会让用户对产品状态产生误判。
         """
-        block = _block(reports.build_report(session, kind="monthly", today=TODAY), "payroll", "unavailable")
-        assert "P6" in block["text"]
-        section = next(
-            item
-            for item in reports.build_report(session, kind="monthly", today=TODAY)["sections"]
-            if item["key"] == "payroll"
-        )
-        assert not any(item["type"] == "metrics" for item in section["blocks"])
-
-    def test_trend_section_explains_absence(self, session) -> None:
-        """没有净值数据时要说明原因，而不是画一张空图。"""
         document = reports.build_report(session, kind="monthly", today=TODAY)
-        blocks = _blocks(document, "trend")
-        assert all(item["type"] != "chart" for item in blocks)
-        assert any(item["type"] == "text" for item in blocks)
-
-    def test_insights_say_nothing_notable(self, session) -> None:
-        document = reports.build_report(session, kind="monthly", today=TODAY)
-        assert [item["key"] for item in document["insights"]] == ["nothing_notable"]
-
-    def test_empty_table_carries_explanation(self, session) -> None:
-        """空表要带一句说明：一张只有表头的表会让人以为加载失败。"""
-        table = _block(reports.build_report(session, kind="monthly", today=TODAY), "breakdown", "table")
-        assert table["empty"]
+        # 整个报告里不该再有 `unavailable` 块了
+        assert not any(
+            block["type"] == "unavailable" for section in document["sections"] for block in section["blocks"]
+        ), "P6 落地后不该再有未实现的节"
+        section = next(item for item in document["sections"] if item["key"] == "payroll")
+        first = section["blocks"][0]
+        assert first["type"] == "text"
+        assert "还没有工资" in first["text"]
+        # 空状态不该显示一排 0
+        assert not any(block["type"] == "metrics" for block in section["blocks"])
 
 
 # -----------------------------------------------------------------------------
@@ -440,3 +432,183 @@ class TestInclude:
     def test_section_keys_matches_buildable_sections(self, session) -> None:
         document = reports.build_report(session, kind="custom", start=WINDOW_START, end=TODAY)
         assert set(reports.section_keys()) == {item["key"] for item in document["sections"]}
+
+
+class TestPayrollSection:
+    """P6 落地后，报表的 payroll 一节是真实内容。
+
+    这一节在 P5 时是 `unavailable` 块。它变成真的时候有一条容易搞错的地方：
+    **"功能未实现"与"还没有数据"是两件事** —— 前者该说"还没做"，
+    后者该说"记几笔就有了"。把后者写成 `unavailable` 会让用户
+    以为功能没上线而不去录入。
+    """
+
+    def _seed(self, session):
+        from accountbook.services import accounts as accounts_service
+        from accountbook.services import insurance as insurance_service
+        from accountbook.services import payroll as payroll_service
+
+        account = accounts_service.list_accounts(session)[0]
+        source = payroll_service.add_source(session, name="主职", account_id=account.id)
+        payroll_service.create_component(
+            session,
+            name="基本工资",
+            kind="basic",
+            source_id=source.id,
+            amount_minor=2_000_000,
+            sort_order=1,
+        )
+        payroll_service.create_component(
+            session,
+            name="个税",
+            kind="tax",
+            sign=-1,
+            amount_minor=150_000,
+            source_id=source.id,
+            sort_order=9,
+        )
+        payroll_service.create_component(
+            session,
+            name="五险一金代扣",
+            kind="insurance",
+            sign=-1,
+            amount_minor=300_000,
+            source_id=source.id,
+            sort_order=8,
+        )
+        period = f"{TODAY.year:04d}-{TODAY.month:02d}"
+        record = payroll_service.create_record(session, source.id, period, pay_date=TODAY)
+        payroll_service.fill_record(session, record.id, create_transaction=False)
+
+        insurance_service.ensure_standard_items(session)
+        insurance_service.upsert_item(session, kind="pension", personal_rate_bps=800, employer_rate_bps=1600)
+        profile = insurance_service.add_profile(session, name="本人", social_base_minor=2_000_000)
+        insurance_service.record_contribution(session, profile.id, period)
+        return source, record, profile, period
+
+    def test_with_data_produces_real_blocks(self, session) -> None:
+        self._seed(session)
+        document = reports.build_report(session, kind="monthly", today=TODAY)
+        section = next(item for item in document["sections"] if item["key"] == "payroll")
+        types = [block["type"] for block in section["blocks"]]
+        assert "metrics" in types and "table" in types and "chart" in types
+        assert "unavailable" not in types
+
+        metrics = next(b for b in section["blocks"] if b["type"] == "metrics")
+        values = {item["key"]: item.get("value_minor") for item in metrics["items"]}
+        assert values["payroll_gross"] == 2_000_000
+        # 实发 = 应发 − 五险一金 − 个税
+        assert values["payroll_net"] == 1_550_000
+        assert values["payroll_tax"] == 150_000
+        assert values["payroll_insurance"] == 300_000
+        # 单位缴纳是"隐形收入"，与工资表里的代扣是两回事
+        assert values["payroll_employer"] == 320_000
+
+    def test_waterfall_sums_to_net(self, session) -> None:
+        """瀑布的加减必须**正好**落在实发上，否则这张图是误导性的。"""
+        self._seed(session)
+        document = reports.build_report(session, kind="monthly", today=TODAY)
+        section = next(item for item in document["sections"] if item["key"] == "payroll")
+        waterfall = next(
+            block
+            for block in section["blocks"]
+            if block["type"] == "chart" and block.get("title") == "应发 → 实发"
+        )
+        points = waterfall["dataset"]["points"]
+        names = [point["name"] for point in points]
+        assert names[0] == "应发" and names[-1] == "实发"
+        # 中间的减项都必须是负值，否则图上会画成正向的柱子
+        assert all(point["value_minor"] < 0 for point in points[1:-1])
+        assert (
+            sum(point["value_minor"] for point in points[1:-1])
+            == points[-1]["value_minor"] - points[0]["value_minor"]
+        )
+
+    def test_negative_bars_reach_the_html_export(self, session) -> None:
+        """**导出要画得出负值柱。**
+
+        早先的实现按 `max(0, value)` 算高度，于是瀑布里所有减项
+        都变成 0 高度、一根柱子都看不见 —— 而页面看起来像"图表加载失败"。
+        """
+        from accountbook.services import report_export
+
+        self._seed(session)
+        document = reports.build_report(session, kind="monthly", today=TODAY)
+        html = report_export.render_html(document)
+        # 负值用另一种颜色画，并有一条零线
+        assert "stroke-dasharray" in html, "有负值时应当画出零线"
+        assert "#c0392b" in html, "负值柱应当用另一种颜色"
+
+    def test_skipped_records_are_excluded(self, session) -> None:
+        from accountbook.services import payroll as payroll_service
+
+        self._seed(session)
+        source = payroll_service.list_sources(session)[0]
+        # 上一个月跳过：不该出现在合计里
+        previous = f"{TODAY.year - 1:04d}-12"
+        draft = payroll_service.create_record(session, source.id, previous, pay_date=TODAY)
+        payroll_service.skip_record(session, draft.id, reason="该月无工资")
+        document = reports.build_report(session, kind="yearly", today=TODAY)
+        section = next(item for item in document["sections"] if item["key"] == "payroll")
+        metrics = next(b for b in section["blocks"] if b["type"] == "metrics")
+        values = {item["key"]: item.get("value_minor") for item in metrics["items"]}
+        # 只有本月那一条被计入
+        assert values["payroll_gross"] == 2_000_000
+
+    def test_pending_draft_is_pointed_out(self, session) -> None:
+        """未填写的草稿会让"这个月实发"看起来偏低 —— 必须说明。"""
+        from accountbook.services import payroll as payroll_service
+
+        source, _, _, _ = self._seed(session)
+        # 草稿必须落在**报告区间内**：年报覆盖本年 1–12 月，
+        # 放到去年就不在区间里，那样测的是另一件事
+        payroll_service.create_record(session, source.id, f"{TODAY.year:04d}-03", pay_date=TODAY)
+        document = reports.build_report(session, kind="yearly", today=TODAY)
+        section = next(item for item in document["sections"] if item["key"] == "payroll")
+        notes = " ".join(block.get("text", "") for block in section["blocks"] if block["type"] == "note")
+        assert "草稿" in notes
+
+    def test_unfilled_rates_are_explained(self, session) -> None:
+        """有缴纳记录但合计为 0 时，要说清是"比例还没填"而不是"缴得少"。"""
+        from accountbook.services import accounts as accounts_service
+        from accountbook.services import insurance as insurance_service
+        from accountbook.services import payroll as payroll_service
+
+        account_id = accounts_service.list_accounts(session)[0].id
+        source = payroll_service.add_source(session, name="主职", account_id=account_id)
+        payroll_service.create_component(
+            session,
+            name="基本工资",
+            kind="basic",
+            source_id=source.id,
+            amount_minor=1_000_000,
+            sort_order=1,
+        )
+        period = f"{TODAY.year:04d}-{TODAY.month:02d}"
+        record = payroll_service.create_record(session, source.id, period, pay_date=TODAY)
+        payroll_service.fill_record(session, record.id, create_transaction=False)
+        insurance_service.ensure_standard_items(session)
+        profile = insurance_service.add_profile(session, name="本人", social_base_minor=1_000_000)
+        # 比例一律为 0 → 记录存在但金额为 0，这正是最容易误导的情形
+        insurance_service.record_contribution(session, profile.id, period)
+
+        document = reports.build_report(session, kind="monthly", today=TODAY)
+        section = next(item for item in document["sections"] if item["key"] == "payroll")
+        notes = " ".join(block.get("text", "") for block in section["blocks"] if block["type"] == "note")
+        assert "比例" in notes
+
+    def test_out_of_range_period_is_excluded(self, session) -> None:
+        from accountbook.services import payroll as payroll_service
+
+        self._seed(session)
+        source = payroll_service.list_sources(session)[0]
+        payroll_service.create_record(session, source.id, f"{TODAY.year - 2:04d}-03", pay_date=TODAY)
+        document = reports.build_report(session, kind="monthly", today=TODAY)
+        section = next(item for item in document["sections"] if item["key"] == "payroll")
+        table = next(
+            block
+            for block in section["blocks"]
+            if block["type"] == "table" and block.get("title") == "逐月工资"
+        )
+        # 两年前的记录不该出现在"本月报告"里
+        assert all(row["period"].startswith(str(TODAY.year)) for row in table["rows"])

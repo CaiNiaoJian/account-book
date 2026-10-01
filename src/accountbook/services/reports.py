@@ -50,9 +50,11 @@ from ..core.periods import add_months
 from ..db.models import Account, Category
 from . import aggregate
 from . import budgets as budgets_service
+from . import insurance as insurance_service
 from . import kline as kline_service
 from . import ledger as ledger_service
 from . import piggy as piggy_service
+from .payroll import list_records as list_payroll_records
 
 __all__ = [
     "KINDS",
@@ -688,22 +690,219 @@ def _section_calendar(session: Session, start: date, end: date) -> dict[str, Any
     }
 
 
-def _section_payroll() -> dict[str, Any]:
+def _periods_in(start: date, end: date) -> list[str]:
+    """区间覆盖到的月份（含两端）。
+
+    报告区间是按天的（`2026-09-11 — 2026-10-01`），而工资与缴纳是按月的。
+    直接用 start 的月份会漏掉 10 月那部分；用自然月又会把没覆盖的日子算进来。
+    这里取**两端之间的所有月份**，宁可多算一个月也不漏 ——
+    漏掉的那个月正是用户最可能想看的（比如刚发的这次工资）。
+    """
+    periods: list[str] = []
+    year, month = start.year, start.month
+    while (year, month) <= (end.year, end.month):
+        periods.append(f"{year:04d}-{month:02d}")
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return periods
+
+
+def _section_payroll(session: Session, start: date, end: date) -> dict[str, Any]:
     """P6 的薪酬与五险一金。
 
-    **刻意不填 0**：一排 0 会让用户以为"我这个月五险一金是 0"，
-    而事实是这个功能还没做。一个填满假零的报告比缺一节的报告危险得多。
+    这一节在 P5 时是 `unavailable` 块（"尚未实现，不放一排 0"）。
+    现在数据齐了，于是它变成真实内容 —— 但**空状态仍要与"未实现"区分**：
+    没记录时说"录一次工资就有了"，而不是说"功能还没做"。
+
+    口径上与别处的三处一致：
+    * 入账金额用**实发**（账户里真正到账的）；
+    * 单位缴纳单列，因为它是没进工资卡但确实属于你的"隐形收入"；
+    * 作废/跳过的记录不计入合计。
     """
-    return {
-        "key": "payroll",
-        "title": "薪酬与五险一金",
-        "blocks": [
-            _unavailable(
-                "这一节尚未实现（P6：发薪规则、工资收录表、五险一金档案）。"
-                "暂时不显示任何数字 —— 放一排 0 会让你误以为本月缴纳额真的是 0。"
+    periods = _periods_in(start, end)
+    all_records = list_payroll_records(session, limit=1000)
+    records = [
+        row
+        for row in all_records
+        if row.period in periods and row.status != "skipped" and row.deleted_at is None
+    ]
+    insurance = insurance_service.insurance_overview(session, start_period=periods[0], end_period=periods[-1])
+    pending = [row for row in all_records if row.status == "draft" and row.period in periods]
+
+    blocks: list[dict[str, Any]] = []
+
+    if not records and insurance["record_count"] == 0:
+        blocks.append(
+            _text(
+                "这一区间还没有工资或五险一金记录。"
+                "录入一次工资（或设置发薪规则让系统按月提醒）之后，"
+                "这里会显示应发实发构成、五险一金明细与账户积累。"
             )
-        ],
-    }
+        )
+        blocks.append(
+            _note(
+                "五险一金的**比例因城市与年份而异**，系统不会预置 —— "
+                "请在设置里按当地政策填写，否则合计会是 0。"
+            )
+        )
+        return {"key": "payroll", "title": "薪酬与五险一金", "blocks": blocks}
+
+    gross = sum(row.gross_minor for row in records)
+    net = sum(row.net_minor for row in records)
+    tax = sum(row.tax_minor for row in records)
+    deducted_insurance = sum(int(row.insurance_snapshot.get("total_minor", 0)) for row in records)
+    # 工资表里的其它减项（例如税前扣除）—— 用它把瀑布拼平
+    other_deduction = gross - net - tax - deducted_insurance
+
+    blocks.append(
+        _metrics(
+            [
+                _money_metric("payroll_gross", "应发合计", gross, hint=f"{len(records)} 条记录"),
+                _money_metric("payroll_net", "实发合计", net, tone="positive"),
+                _money_metric("payroll_tax", "个税", tax, tone="negative"),
+                _money_metric("payroll_insurance", "五险一金代扣", deducted_insurance, tone="negative"),
+                _money_metric(
+                    "payroll_employer",
+                    "单位缴纳（隐形收入）",
+                    insurance["employer_total_minor"],
+                    tone="positive",
+                    hint="没进工资卡，但确实是你的",
+                ),
+            ]
+        )
+    )
+
+    # 应发实发瀑布。用带符号的柱：负值是减项，前端与导出都能画出来
+    waterfall = [
+        {"name": "应发", "value_minor": gross},
+        {"name": "五险一金", "value_minor": -deducted_insurance},
+    ]
+    if tax:
+        waterfall.append({"name": "个税", "value_minor": -tax})
+    if other_deduction:
+        waterfall.append({"name": "其它扣除", "value_minor": -other_deduction})
+    waterfall.append({"name": "实发", "value_minor": net})
+    blocks.append(_chart("bar", {"points": waterfall}, title="应发 → 实发", unit="money"))
+
+    # 逐月工资
+    by_period: dict[str, dict[str, Any]] = {}
+    for row in records:
+        bucket = by_period.setdefault(
+            row.period,
+            {
+                "period": row.period,
+                "gross_minor": 0,
+                "tax_minor": 0,
+                "insurance_minor": 0,
+                "net_minor": 0,
+                "count": 0,
+            },
+        )
+        bucket["gross_minor"] += row.gross_minor
+        bucket["tax_minor"] += row.tax_minor
+        bucket["insurance_minor"] += int(row.insurance_snapshot.get("total_minor", 0))
+        bucket["net_minor"] += row.net_minor
+        bucket["count"] += 1
+    monthly = [by_period[key] for key in sorted(by_period)]
+    blocks.append(
+        _table(
+            [
+                {"key": "period", "label": "期间", "align": "left"},
+                {"key": "gross_minor", "label": "应发", "align": "right", "format": "money"},
+                {"key": "insurance_minor", "label": "五险一金", "align": "right", "format": "money"},
+                {"key": "tax_minor", "label": "个税", "align": "right", "format": "money"},
+                {"key": "net_minor", "label": "实发", "align": "right", "format": "money"},
+            ],
+            monthly,
+            title="逐月工资",
+            footer={
+                "period": "合计",
+                "gross_minor": gross,
+                "insurance_minor": deducted_insurance,
+                "tax_minor": tax,
+                "net_minor": net,
+            },
+        )
+    )
+
+    # 五险一金构成（单位 vs 个人）
+    if insurance["by_kind"]:
+        blocks.append(
+            _table(
+                [
+                    {"key": "name", "label": "险种", "align": "left"},
+                    {"key": "personal_minor", "label": "个人", "align": "right", "format": "money"},
+                    {"key": "employer_minor", "label": "单位", "align": "right", "format": "money"},
+                ],
+                insurance["by_kind"],
+                title="五险一金构成",
+                footer={
+                    "name": "合计",
+                    "personal_minor": insurance["personal_total_minor"],
+                    "employer_minor": insurance["employer_total_minor"],
+                },
+            )
+        )
+        blocks.append(
+            _chart(
+                "pie",
+                {
+                    "points": [
+                        {"name": item["name"], "value_minor": item["personal_minor"] + item["employer_minor"]}
+                        for item in insurance["by_kind"]
+                    ]
+                },
+                title="五险一金构成",
+                unit="money",
+            )
+        )
+
+    if insurance["account_total_minor"]:
+        blocks.append(
+            _metrics(
+                [
+                    _money_metric(
+                        "insurance_account_total", "个人账户余额", insurance["account_total_minor"]
+                    ),
+                    _money_metric(
+                        "insurance_account_housing",
+                        "其中公积金",
+                        insurance["account_balances"].get("housing_fund", 0),
+                    ),
+                    _money_metric(
+                        "insurance_account_pension",
+                        "其中养老",
+                        insurance["account_balances"].get("pension", 0),
+                    ),
+                ]
+            )
+        )
+
+    if pending:
+        # 未填写的记录要点出来：它们会让"这个月实发"看起来偏低
+        blocks.append(
+            _note(f"另有 {len(pending)} 条草稿记录尚未填写，未计入上面的合计 —— 填完之后数字会变。")
+        )
+
+    # 有险种还没填比例时，合计**必然偏小** —— 不说明会让用户以为缴得少
+    if insurance["record_count"] and not insurance["personal_total_minor"]:
+        blocks.append(
+            _note(
+                "五险一金的缴纳记录存在，但合计为 0 —— 很可能是险种比例还没填。"
+                "比例因城市与年份而异，需要按当地政策录入。"
+            )
+        )
+
+    blocks.append(
+        _note(
+            "口径：入账金额用**实发**（账户里真正到账的）；作废与跳过的记录不计入合计；"
+            "单位缴纳单列，因为它没进工资卡。利息由你在年度对账里录入 —— "
+            "利率因城市与年份而异，系统不预置。"
+        )
+    )
+    return {"key": "payroll", "title": "薪酬与五险一金", "blocks": blocks}
 
 
 def _section_insights(session: Session, start: date, end: date, totals: dict[str, int]) -> dict[str, Any]:
@@ -896,7 +1095,7 @@ def build_report(
         "piggy": lambda: _section_piggy(session),
         "trend": lambda: _section_kline(session, start, end),
         "calendar": lambda: _section_calendar(session, start, end),
-        "payroll": _section_payroll,
+        "payroll": lambda: _section_payroll(session, start, end),
         "insights": lambda: _section_insights(session, start, end, totals),
     }
     selected = [key for key in builders if include is None or key in include]

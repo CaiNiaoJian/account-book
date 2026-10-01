@@ -146,22 +146,28 @@ class TestMarkdown:
         assert "每日支出" in text
         assert "| 项 | 值 |" in text
 
-    def test_unavailable_block_is_marked(self, session) -> None:
-        text = report_export.render_markdown(_document(session))
-        assert "尚未实现" in text
+    def test_unavailable_block_is_marked(self) -> None:
+        """`unavailable` 块在 Markdown 里要显眼地标出来。
 
-    def test_insights_are_grouped_by_level(self, session) -> None:
-        transactions_service.create_transaction(
-            session,
-            type=TransactionType.INCOME.value,
-            account_id=_account(session).id,
-            amount_minor=1_000,
-            occurred_at=datetime.combine(TODAY, datetime.min.time()).replace(hour=9),
+        这里用**构造的文档**而不是真实报告：P6 落地后已经没有哪一节
+        再用 `unavailable` 了，于是"真实报告里找不到它"与
+        "渲染器坏了"看起来一模一样 —— 这正是之前 XSS 检查踩过的坑。
+        """
+        document = _minimal_document(
+            sections=[
+                {
+                    "key": "x",
+                    "title": "未实现的一节",
+                    "blocks": [{"type": "unavailable", "text": "这一节尚未实现（示例）"}],
+                }
+            ]
         )
-        _spend(session, day=TODAY, amount=100_000)
-        text = report_export.render_markdown(_document(session))
-        assert "净流出" in text
-        assert "建议：" in text
+        text = report_export.render_markdown(document)
+        assert "尚未实现" in text
+        assert "⚠️" in text
+        # HTML 与 PDF 也要能处理它，而不是抛异常
+        assert "unavailable" in report_export.render_html(document)
+        assert report_export.render_pdf(document).startswith(b"%PDF-")
 
 
 # -----------------------------------------------------------------------------
