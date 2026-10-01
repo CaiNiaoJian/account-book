@@ -23,11 +23,14 @@ from accountbook.db.session import Database
 from accountbook.services import accounts as accounts_service
 from accountbook.services import budgets as budgets_service
 from accountbook.services import categories as categories_service
+from accountbook.services import daily as daily_service
 from accountbook.services import debts as debts_service
 from accountbook.services import kline as kline_service
 from accountbook.services import recurring as recurring_service
 from accountbook.services import stats as stats_service
+from accountbook.services import taxonomy as taxonomy_service
 from accountbook.services import transactions as transactions_service
+from accountbook.services import trash as trash_service
 from accountbook.services.transactions import TransactionQuery
 
 TODAY = date.today()
@@ -805,3 +808,186 @@ class TestRepaymentPlan:
         assert any(row["due"] for row in plan["rows"])
         # 一期都没还，因此已到期的那些都是逾期
         assert plan["overdue_rows"] >= 1
+
+
+class TestTrash:
+    def _deleted_transaction(self, session: Session):
+        row = _spend(session, day=TODAY, amount=1_000)
+        transactions_service.delete_transaction(session, row.id)
+        return row
+
+    def test_summary_counts_deleted(self, session: Session) -> None:
+        self._deleted_transaction(session)
+        counts = {item["entity"]: item["count"] for item in trash_service.summary(session)}
+        assert counts["transactions"] == 1
+        assert counts["accounts"] == 0
+        assert set(counts) == set(trash_service.ENTITY_KEYS), "12 个软删除实体都要出现"
+
+    def test_list_only_shows_deleted(self, session: Session) -> None:
+        """未删除的不算"在回收站里"。"""
+        _spend(session, day=TODAY, amount=1_000)
+        payload = trash_service.list_trash(session, "transactions")
+        assert payload["items"] == []
+        assert payload["total"] == 0
+
+        self._deleted_transaction(session)
+        payload = trash_service.list_trash(session, "transactions")
+        assert payload["total"] == 1
+        assert payload["items"][0]["deleted_at"] is not None
+
+    def test_restore_via_domain_service_marks_daily_dirty(self, session: Session) -> None:
+        """恢复流水必须走领域服务：它要顺带重算日结。
+
+        直接改 deleted_at 会让日结缓存停在旧值上 —— 用户恢复了一笔账，
+        日历却还是没记的样子。
+        """
+        row = self._deleted_transaction(session)
+        trash_service.restore(session, "transactions", row.id)
+        session.refresh(row)
+        assert row.deleted_at is None
+        # 恢复后日历能重新看到这一天 —— 这正是"必须走领域服务"的原因
+        cells = daily_service.get_calendar(session, start=TODAY, end=TODAY, metric="expense")
+        assert cells[0].expense_minor > 0
+
+    def test_restore_rejects_row_not_in_trash(self, session: Session) -> None:
+        row = _spend(session, day=TODAY, amount=1_000)
+        with pytest.raises(ConflictError):
+            trash_service.restore(session, "transactions", row.id)
+
+    def test_restore_unknown_entity(self, session: Session) -> None:
+        with pytest.raises(ValidationError):
+            trash_service.restore(session, "unicorns", 1)
+
+    def test_purge_cascades_to_owned_children(self, session: Session) -> None:
+        """带分账的流水**可以**被彻底删除，分账一起消失。
+
+        分账是 `cascade="all, delete-orphan"` 的**组成部分**，
+        不是外部引用。purge 最初把它当成引用而拒绝删除 —— 那会让
+        "清理回收站"对每一笔有分账的流水都失败。
+        """
+        row = transactions_service.create_transaction(
+            session,
+            type=TransactionType.EXPENSE.value,
+            account_id=_account(session).id,
+            amount_minor=10_000,
+            occurred_at=datetime.combine(TODAY, datetime.min.time()).replace(hour=12),
+            splits=[
+                {"category_id": _category(session, "午餐"), "amount_minor": 7_000},
+                {"category_id": _category(session, "打车"), "amount_minor": 3_000},
+            ],
+        )
+        # 分账与流水标签都是"组成部分"，不该被当成外部引用
+        assert (
+            trash_service.blocking_references(session, trash_service.get_entity("transactions"), row.id) == []
+        ), "级联子表（transaction_splits / transaction_tags）不该算作外部引用"
+
+        transactions_service.delete_transaction(session, row.id)
+
+        trash_service.purge(session, "transactions", row.id)
+        assert session.get(transactions_service.Transaction, row.id) is None
+
+    def test_purge_blocked_by_real_reference(self, session: Session) -> None:
+        """真正的**外部**引用仍然阻止彻底删除，并说清被什么挡住。
+
+        场景：自建分类 + 一条挂在它上面的预算，两者都进了回收站。
+        此时删掉分类会让预算指向一个不存在的目标 —— 之后恢复它就是个坏对象。
+        """
+        parent = _category(session, "餐饮")
+        custom = categories_service.create_category(session, name="下午茶", kind="expense", parent_id=parent)
+        budget = budgets_service.create_budget(
+            session,
+            name="下午茶预算",
+            scope="category",
+            category_id=custom.id,
+            period="monthly",
+            amount_minor=10_000,
+        )
+        budgets_service.delete_budget(session, budget.id)
+        # 分类本身没有流水，可以正常软删除
+        categories_service.delete_category(session, custom.id)
+
+        with pytest.raises(ConflictError) as info:
+            trash_service.purge(session, "categories", custom.id)
+        assert "budgets" in str(info.value)
+
+    def test_purge_allows_unreferenced(self, session: Session) -> None:
+        row = self._deleted_transaction(session)
+        trash_service.purge(session, "transactions", row.id)
+        assert session.get(type(row), row.id) is None
+        assert trash_service.list_trash(session, "transactions")["total"] == 0
+
+    def test_purge_rejects_row_not_in_trash(self, session: Session) -> None:
+        row = _spend(session, day=TODAY, amount=1_000)
+        with pytest.raises(ConflictError):
+            trash_service.purge(session, "transactions", row.id)
+
+
+class TestBatchEdit:
+    def _three(self, session: Session) -> list[int]:
+        return [_spend(session, day=TODAY - timedelta(days=index), amount=1_000).id for index in range(3)]
+
+    def test_batch_category(self, session: Session) -> None:
+        ids = self._three(session)
+        target = _category(session, "打车")
+        report = transactions_service.batch_update(session, ids, category_id=target)
+        assert report["count"] == 3
+        assert report["skipped"] == []
+        for row_id in ids:
+            assert session.get(transactions_service.Transaction, row_id).category_id == target
+
+    def test_unset_does_not_touch_field(self, session: Session) -> None:
+        """没给的字段保持原样 —— UNSET 与 None 是两件事。"""
+        ids = self._three(session)
+        original = _category(session, "午餐")
+        transactions_service.batch_update(session, ids, project_id=None)
+        for row_id in ids:
+            assert session.get(transactions_service.Transaction, row_id).category_id == original
+
+    def test_explicit_none_clears_category(self, session: Session) -> None:
+        """显式传 None 是"把分类清掉"，这是合法且常见的意图。"""
+        ids = self._three(session)
+        transactions_service.batch_update(session, ids, category_id=None)
+        for row_id in ids:
+            assert session.get(transactions_service.Transaction, row_id).category_id is None
+
+    def test_add_tags_merges_without_duplicates(self, session: Session) -> None:
+        """追加标签是幂等的：批量操作重复执行不该产生重复关联。"""
+        ids = self._three(session)
+        tag = taxonomy_service.create_tag(session, name="报销")
+        transactions_service.batch_update(session, ids, add_tag_ids=[tag.id])
+        report = transactions_service.batch_update(session, ids, add_tag_ids=[tag.id])
+        assert report["count"] == 3
+        row = session.get(transactions_service.Transaction, ids[0])
+        assert [item.id for item in row.tags] == [tag.id]
+
+    def test_single_failure_does_not_roll_back_batch(self, session: Session) -> None:
+        """单笔失败不该让整批回滚：用户已经选好了一批，
+        因为其中一笔的分类被删掉而全部失败是很糟的体验。"""
+        ids = self._three(session)
+        missing = 999_999
+        report = transactions_service.batch_update(
+            session, [*ids, missing], category_id=_category(session, "打车")
+        )
+        assert report["count"] == 3
+        assert report["skipped"] == [{"id": missing, "reason": "not_found"}]
+
+    def test_empty_and_oversized_ids_rejected(self, session: Session) -> None:
+        with pytest.raises(ValidationError):
+            transactions_service.batch_update(session, [], category_id=1)
+        with pytest.raises(ValidationError):
+            transactions_service.batch_update(session, list(range(1, 502)), category_id=1)
+
+    def test_batch_delete_is_recoverable(self, session: Session) -> None:
+        ids = self._three(session)
+        report = transactions_service.batch_delete(session, ids)
+        assert report["count"] == 3
+        for row_id in ids:
+            assert session.get(transactions_service.Transaction, row_id).deleted_at is not None
+        # 可从回收站恢复
+        assert trash_service.list_trash(session, "transactions")["total"] == 3
+
+    def test_batch_delete_skips_missing(self, session: Session) -> None:
+        ids = self._three(session)
+        report = transactions_service.batch_delete(session, [*ids[:1], 999_999])
+        assert report["count"] == 1
+        assert len(report["skipped"]) == 1

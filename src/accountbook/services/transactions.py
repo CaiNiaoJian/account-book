@@ -30,7 +30,7 @@ from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..core.domain import TRANSFER_TYPES, CategoryKind, TransactionStatus, TransactionType
-from ..core.errors import NotFoundError, ValidationError
+from ..core.errors import ConflictError, NotFoundError, ValidationError
 from ..core.money import DEFAULT_CURRENCY
 from ..db.base import local_now
 from ..db.models import Account, Category, Tag, Transaction, TransactionSplit
@@ -289,6 +289,7 @@ def update_transaction(
     *,
     splits: list[dict[str, Any]] | None = None,
     tag_ids: list[int] | None = None,
+    add_tag_ids: list[int] | None = None,
     **changes: Any,
 ) -> Transaction:
     """更新流水。
@@ -319,6 +320,15 @@ def update_transaction(
     if tag_ids is not None:
         _replace_tags(session, transaction, tag_ids)
         session.flush()
+    elif add_tag_ids:
+        # 追加语义（批量打标签用）。与 tag_ids 互斥：同时给两者
+        # 会让"到底以哪个为准"变成一个没有正确答案的问题。
+        # 已挂上的标签不重复添加 —— 批量操作重复执行时不该产生重复关联
+        existing = {tag.id for tag in transaction.tags}
+        merged = existing | {int(item) for item in add_tag_ids}
+        if merged != existing:
+            _replace_tags(session, transaction, sorted(merged))
+            session.flush()
 
     daily.mark_dirty_from(session, min(previous_day, transaction.occurred_at))
 
@@ -720,3 +730,106 @@ def daily_totals(
         )
         cursor += timedelta(days=1)
     return totals
+
+
+class _Unset:
+    """区分"不改这个字段"与"把它清空"。
+
+    用 ``None`` 当"不改"的哨兵是行不通的：``category_id=None`` 是一个
+    合法且常见的意图（把分类清掉）。少了这个区分，批量操作要么改不动、
+    要么会把用户没打算动的字段一起清掉。
+    """
+
+    def __repr__(self) -> str:  # pragma: no cover - 仅调试用
+        return "UNSET"
+
+
+UNSET = _Unset()
+
+#: 允许批量修改的字段。刻意不含 amount_minor / occurred_at / type：
+#: 把一批金额不同的流水改成同一个金额，几乎总是误操作
+BATCH_MUTABLE = ("category_id", "project_id", "member_id", "status")
+
+
+def batch_update(
+    session: Session,
+    ids: list[int],
+    *,
+    category_id: Any = UNSET,
+    project_id: Any = UNSET,
+    member_id: Any = UNSET,
+    status: Any = UNSET,
+    tag_ids: list[int] | None = None,
+    add_tag_ids: list[int] | None = None,
+) -> dict[str, Any]:
+    """批量修改流水。
+
+    全是**加法与替换**、没有"清空全部标签"这种破坏性选项：
+    批量操作的代价是用户看不清每一笔的后果，因此只提供意图明确的操作。
+
+    返回结构里 ``skipped`` 列出被跳过的 id 与原因，而不是静默跳过 ——
+    用户选中 10 笔只改了 8 笔时必须知道为什么。
+
+    ``tag_ids`` 是**替换**，``add_tag_ids`` 是**追加**（批量打标签用），
+    两者互斥。
+    """
+    if not ids:
+        raise ValidationError("没有选中任何流水", field="ids")
+    if len(ids) > 500:
+        raise ValidationError("一次最多批量修改 500 笔", field="ids", max_items=500)
+
+    changes: dict[str, Any] = {}
+    # 循环变量不能叫 field —— 那会在函数作用域里遮蔽 `field` 这个导入
+    for name, value in (
+        ("category_id", category_id),
+        ("project_id", project_id),
+        ("member_id", member_id),
+        ("status", status),
+    ):
+        if not isinstance(value, _Unset):
+            changes[name] = value
+    if not changes and tag_ids is None and not add_tag_ids:
+        raise ValidationError("没有任何要修改的内容", field="changes")
+
+    updated: list[int] = []
+    skipped: list[dict[str, Any]] = []
+    for transaction_id in ids:
+        row = session.get(Transaction, transaction_id)
+        if row is None or row.deleted_at is not None:
+            skipped.append({"id": transaction_id, "reason": "not_found"})
+            continue
+        try:
+            update_transaction(
+                session,
+                transaction_id,
+                tag_ids=tag_ids,
+                add_tag_ids=add_tag_ids,
+                **changes,
+            )
+        except (NotFoundError, ValidationError, ConflictError) as error:
+            # 单笔失败不该让整批回滚：用户已经选好了一批，
+            # 因为其中一笔的分类被删掉而全部失败是很糟的体验
+            skipped.append({"id": transaction_id, "reason": str(error)})
+            continue
+        updated.append(transaction_id)
+
+    return {"updated": updated, "skipped": skipped, "count": len(updated)}
+
+
+def batch_delete(session: Session, ids: list[int]) -> dict[str, Any]:
+    """批量软删除（可恢复）。"""
+    if not ids:
+        raise ValidationError("没有选中任何流水", field="ids")
+    if len(ids) > 500:
+        raise ValidationError("一次最多批量删除 500 笔", field="ids", max_items=500)
+
+    deleted: list[int] = []
+    skipped: list[dict[str, Any]] = []
+    for transaction_id in ids:
+        row = session.get(Transaction, transaction_id)
+        if row is None or row.deleted_at is not None:
+            skipped.append({"id": transaction_id, "reason": "not_found"})
+            continue
+        delete_transaction(session, transaction_id)
+        deleted.append(transaction_id)
+    return {"deleted": deleted, "skipped": skipped, "count": len(deleted)}

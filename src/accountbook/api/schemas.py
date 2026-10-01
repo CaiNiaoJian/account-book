@@ -784,6 +784,49 @@ class ParseTextResult(BaseModel):
 
 
 # -----------------------------------------------------------------------------
+# P1 尾巴：回收站与批量操作
+# -----------------------------------------------------------------------------
+class TrashItemOut(BaseModel):
+    entity: str
+    id: int
+    title: str
+    subtitle: str = ""
+    deleted_at: str | None = None
+
+
+class TrashListOut(BaseModel):
+    entity: str
+    items: list[TrashItemOut]
+    total: int
+
+
+class BatchUpdateRequest(RequestModel):
+    """批量修改流水。
+
+    **只应用显式给出的字段**：路由层用 ``model_fields_set`` 判断，
+    因此"没传 category_id"（不动）与"传了 category_id=null"（清掉分类）
+    是两件事。少了这个区分，批量操作要么改不动、要么误清字段。
+
+    刻意**不含** ``amount_minor`` / ``occurred_at`` / ``type``：
+    把一批金额不同的流水改成同一个金额，几乎总是误操作。
+    """
+
+    ids: list[int] = Field(min_length=1, max_length=500)
+    category_id: int | None = None
+    project_id: int | None = None
+    member_id: int | None = None
+    status: Literal["pending", "cleared", "reconciled", "void"] | None = None
+    #: **替换**全部标签
+    tag_ids: list[int] | None = None
+    #: **追加**标签（批量打标签用），与 tag_ids 互斥
+    add_tag_ids: list[int] | None = None
+
+
+class BatchDeleteRequest(RequestModel):
+    ids: list[int] = Field(min_length=1, max_length=500)
+
+
+# -----------------------------------------------------------------------------
 # 元数据
 # -----------------------------------------------------------------------------
 class CurrencyOut(BaseModel):
