@@ -14,6 +14,7 @@ from accountbook.core.security import (
     build_origin_whitelist,
     constant_time_equals,
     is_loopback_host,
+    mask_token_in_url,
     origin_allowed,
 )
 
@@ -138,3 +139,24 @@ class TestOriginWhitelist:
 def test_cookie_name_is_stable() -> None:
     """Cookie 名带应用前缀，降低与其它本地应用撞名的概率。"""
     assert COOKIE_NAME == "ab_session"
+
+
+class TestMaskTokenInUrl:
+    """入口地址的令牌脱敏（日志与错误提示共用同一实现）。"""
+
+    def test_masks_token_but_keeps_prefix_and_length(self) -> None:
+        token = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
+        masked = mask_token_in_url(f"http://127.0.0.1:8000/?token={token}")
+        assert token not in masked
+        assert masked.startswith("http://127.0.0.1:8000/?token=abcdef…")
+        assert f"({len(token)} chars)" in masked
+
+    def test_keeps_trailing_query_parameters(self) -> None:
+        """令牌之后可能还有其它参数，不能被一起吞掉。"""
+        masked = mask_token_in_url("http://127.0.0.1:8000/?token=secret-token-value&lang=zh")
+        assert "secret-token-value" not in masked
+        assert masked.endswith("&lang=zh")
+
+    def test_url_without_token_is_unchanged(self) -> None:
+        url = "http://127.0.0.1:8000/health"
+        assert mask_token_in_url(url) == url

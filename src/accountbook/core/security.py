@@ -34,10 +34,12 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 __all__ = [
+    "COOKIE_NAME",
     "SessionToken",
     "build_origin_whitelist",
     "constant_time_equals",
     "is_loopback_host",
+    "mask_token_in_url",
     "origin_allowed",
 ]
 
@@ -103,6 +105,20 @@ def build_origin_whitelist(port: int) -> frozenset[str]:
         for host in ("127.0.0.1", "localhost"):
             origins.add(f"{scheme}://{host}:{port}")
     return frozenset(origins)
+
+
+def mask_token_in_url(url: str) -> str:
+    """把 URL 查询串里的令牌打码，供日志与错误提示使用。
+
+    保留前缀与长度：排查时能确认"确实是同一个令牌"，但拿不到可用的值。
+    集中在此实现，避免各处各写一份（曾出现过漏打码的路径）。
+    """
+    if "token=" not in url:
+        return url
+    head, _, token = url.partition("token=")
+    # 令牌之后可能还有其它查询参数，同样需要保留
+    token_part, sep, tail = token.partition("&")
+    return f"{head}token={token_part[:6]}…({len(token_part)} chars){sep}{tail}"
 
 
 def is_loopback_host(host_header: str | None) -> bool:

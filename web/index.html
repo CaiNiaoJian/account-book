@@ -3,7 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>记账本</title>
+    <!--
+      标题说明：
+        `记账本 · AccountBook` 是**窗口探测用的稳定标记** ——
+        浏览器外壳需要靠它判断"界面窗口到底有没有出现"（见 shell/window.py
+        的 _wait_for_app_window）。运行时还会由 main.tsx 用 boot 数据再设一次，
+        两者必须保持一致，不要单独改动其中之一。
+    -->
+    <title>记账本 · AccountBook</title>
     <!--
       说明：
         * 这里刻意**不写 CSP meta 标签**。生产环境的 CSP 由后端以响应头下发

@@ -15,6 +15,14 @@ import { createRoot } from 'react-dom/client'
 
 import './styles/app.css'
 import { App } from './App'
+import { boot } from './lib/boot'
+
+// 窗口标题是**跨层契约**：后端用它确认"界面窗口是否真的出现"
+// （见 accountbook/shell/window.py 的 _wait_for_app_window，
+// 以及 accountbook/__init__.py 的 APP_WINDOW_TITLE）。
+// 因此这里统一由 boot 数据推导，而不是散落在各处硬编码字符串。
+// 注意：刻意**不**跟随界面语言变化 —— 标记必须稳定，否则窗口探测会失效。
+document.title = `${boot.appName} · ${boot.appNameEn}`
 
 const container = document.getElementById('root')
 if (!container) {

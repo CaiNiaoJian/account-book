@@ -23,8 +23,10 @@ import webbrowser
 from abc import ABC, abstractmethod
 from typing import Any
 
+from .. import APP_NAME_EN, APP_WINDOW_TITLE, __version__
 from ..api.state import AppContext
 from ..config import RuntimeSettings
+from ..core.security import mask_token_in_url
 from . import dwm
 from .clr_runtime import resolve_clr_runtime
 
@@ -97,7 +99,9 @@ class WebViewShell(ShellAdapter):
 
         icon_path = self.ctx.paths.app_icon
         self._window = webview.create_window(
-            title=f"{self.ctx.paths.data.name} · 记账本",  # 占位，前端加载后会通过 title API 更新
+            # 标题即"应用标记 + 版本号"：标记与前端 document.title 一致，
+            # 浏览器外壳据此确认窗口是否真的出现（见 BrowserShell._wait_for_app_window）
+            title=f"{APP_WINDOW_TITLE} {__version__}",
             url=self.url,
             width=window_state.width,
             height=window_state.height,
@@ -209,14 +213,16 @@ class WebViewShell(ShellAdapter):
             return 0
 
     def _sync_window_title(self) -> None:
-        """设置窗口标题（含版本号，便于用户区分多开的版本）。"""
+        """设置窗口标题。
+
+        标题 = 应用标记 + 版本号。标记部分必须与
+        :data:`accountbook.APP_WINDOW_TITLE` 完全一致（浏览器外壳靠它确认窗口是否出现）。
+        """
         window = self._window
         if window is None:
             return
         try:
-            from .. import APP_NAME, __version__
-
-            window.title = f"{APP_NAME} {__version__}"
+            window.title = f"{APP_WINDOW_TITLE} {__version__}"
         except Exception as exc:  # noqa: BLE001
             _logger.debug("设置窗口标题失败：%s", exc)
 
@@ -307,6 +313,17 @@ class BrowserShell(ShellAdapter):
 
     功能与原生外壳**完全等价**（同一套前端、同一套 API、同样的令牌），
     差别仅在于没有原生窗口装饰，且关闭浏览器标签时会话需要手动结束。
+
+    ⚠️ 核心约束：**绝不能让用户面对一个看不见的进程**
+    ---------------------------------------------------
+    这是实际踩过的坑：原生窗口不可用 → 降级到浏览器 → 但浏览器没能打开，
+    而托盘图标又恰好创建失败，于是用户双击程序后"什么都不发生"，
+    任务管理器里却躺着一个常驻进程。这比直接报错糟糕得多。
+
+    因此本实现遵守两条规则：
+        1. **依次尝试三种打开方式**，并且**检查返回值**（旧实现无论成败都记"已打开"）；
+        2. 全部失败时**必须给用户一个可见出口**：弹窗给出可复制的地址，
+           并提供「重试 / 退出」，而不是继续静默运行。
     """
 
     kind = "browser"
@@ -315,12 +332,24 @@ class BrowserShell(ShellAdapter):
         _logger.warning(
             "已降级为浏览器外壳（未使用原生窗口）。若这不是预期行为，请检查 pywebview / WebView2 运行时。"
         )
-        try:
-            webbrowser.open(self.url, new=1, autoraise=True)
-        except Exception as exc:  # noqa: BLE001
-            _logger.error("打开浏览器失败，请手动访问：%s（原因：%s）", self.url, exc)
+
+        # 注意：``webbrowser.open`` **会谎报成功** ——
+        # 它在 Windows 上基于 ``os.startfile``，只要 URL 关联存在就返回 True，
+        # 即便浏览器进程根本没起来（实测：返回 True 但没有任何浏览器进程）。
+        # 因此这里必须**确认真实窗口出现**，而不能相信返回值。
+        opened = self._open_browser(self.url)
+        if opened and self._wait_for_app_window():
+            _logger.info("已在默认浏览器中打开界面：%s", _mask_url(self.url))
         else:
-            _logger.info("已在默认浏览器中打开：%s", self.url)
+            _logger.error(
+                "未能确认浏览器窗口出现（open 返回值=%s），改为向用户提示手动访问：%s",
+                opened,
+                _mask_url(self.url),
+            )
+            if not self._prompt_until_visible():
+                _logger.info("用户选择退出，停止本地服务")
+                self.ctx.shutdown_event.set()
+                return
 
         # 阻塞主线程，直到收到停机信号（托盘退出 / Ctrl+C / 外部请求）
         try:
@@ -329,18 +358,173 @@ class BrowserShell(ShellAdapter):
         except KeyboardInterrupt:  # pragma: no cover - 交互式中断
             _logger.info("收到中断信号，准备退出")
 
+    # ---- 打开浏览器：三种方式 + 返回值校验 ----------------------------------
+    @staticmethod
+    def _open_browser(url: str) -> bool:
+        """尝试打开默认浏览器，返回调用方是否**声称**成功。
+
+        三种方式按"尊重用户设置 → 直接调用外壳 → 兜底命令"排序：
+            1. ``webbrowser``：遵循系统默认浏览器设置（正常情况下首选）；
+            2. ``os.startfile``：Windows Shell 关联，绕过 webbrowser 的注册表查找；
+            3. ``cmd /c start``：最后手段，覆盖 Shell 关联被破坏的情况。
+
+        ⚠️ 返回值只代表"调用没有报错"，**不代表窗口真的出现了**。
+        调用方必须再用 :meth:`_wait_for_app_window` 确认（见 ``start``）。
+        """
+        import os
+        import subprocess
+
+        # 1) 标准库：会读取用户配置的默认浏览器
+        try:
+            if webbrowser.open(url, new=1, autoraise=True):
+                return True
+            _logger.debug("webbrowser.open 返回 False，尝试下一种方式")
+        except Exception as exc:  # noqa: BLE001 - 任何异常都只意味着"这条路不通"
+            _logger.debug("webbrowser.open 失败：%s", exc)
+
+        # 2) Windows Shell 关联（成功不抛异常即视为成功）
+        if sys.platform == "win32":
+            try:
+                # URL 完全由本进程构造（环回地址 + 本地令牌），不含任何外部输入
+                os.startfile(url)
+                return True
+            except OSError as exc:
+                _logger.debug("os.startfile 失败：%s", exc)
+
+        # 3) 命令行兜底
+        try:
+            # 参数固定为 cmd 的内置 start 用法，URL 由本进程构造
+            subprocess.Popen(
+                ["cmd", "/c", "start", "", url],
+                close_fds=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            return True
+        except OSError as exc:
+            _logger.debug("cmd start 失败：%s", exc)
+
+        return False
+
+    # ---- 确认窗口真的出现 ---------------------------------------------------
+    @staticmethod
+    def _visible_window_titles() -> list[str]:
+        """枚举当前可见的顶层窗口标题。
+
+        只用标准库 ctypes 调用 ``EnumWindows``：
+        引入 psutil 这类依赖只为读窗口标题并不划算，而窗口标题恰好是
+        "我的界面到底出来了没有"最可靠的信号（浏览器标签标题即页面 ``<title>``）。
+        """
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        titles: list[str] = []
+        # 回调必须保持引用直到 EnumWindows 返回，否则会被 GC 提前回收
+        callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def _collect(hwnd: int, _param: int) -> bool:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length <= 0:
+                return True
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            if buffer.value:
+                titles.append(buffer.value)
+            return True
+
+        try:
+            user32.EnumWindows(callback_type(_collect), 0)
+        except OSError as exc:  # pragma: no cover - 极端环境
+            _logger.debug("枚举窗口失败：%s", exc)
+        return titles
+
+    @classmethod
+    def _wait_for_app_window(cls, timeout: float = 4.0) -> bool:
+        """在超时内轮询"标题里带应用标记"的可见窗口。
+
+        判定依据是 :data:`accountbook.APP_WINDOW_TITLE`（``记账本 · AccountBook``）：
+        它是前端 ``document.title``（浏览器标签即页面标题）与原生窗口标题共同的标记。
+
+        为什么不用宽松的"任意浏览器窗口"或单独的应用名：
+        实测中另一个应用的窗口标题里恰好含"记账本"，
+        宽松判定会把"其实没打开"误判为成功 —— 而这正是我们要根除的失败模式。
+        """
+        if sys.platform != "win32":
+            return True  # 非 Windows 无法枚举，保守认为成功（上层仍会记录日志）
+
+        deadline = time.monotonic() + timeout
+        while True:
+            for title in cls._visible_window_titles():
+                if APP_WINDOW_TITLE in title:
+                    _logger.debug("已确认界面窗口出现：%s", title)
+                    return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.25)
+
+    def _prompt_until_visible(self) -> bool:
+        """可见出口：提示用户手动访问，并在用户要求时反复重试。
+
+        返回是否应当继续运行。用户选择退出时返回 ``False`` ——
+        绝不在用户不知情的情况下继续当一个看不见的进程。
+        """
+        if sys.platform != "win32":
+            _logger.warning("请手动在浏览器中打开：%s", self.url)
+            return True
+
+        while True:
+            result = self._show_prompt()
+            if result is None:
+                # 弹窗本身失败：保守地继续运行，但已在日志里留下地址
+                _logger.warning("提示窗口不可用，请手动访问：%s", self.url)
+                return True
+            if result != 4:  # 非 IDRETRY ⇒ 用户选择退出
+                return False
+            self._open_browser(self.url)
+            if self._wait_for_app_window(timeout=5.0):
+                _logger.info("重试成功，界面已打开")
+                return True
+
+    def _show_prompt(self) -> int | None:
+        """弹出一个可复制的地址提示框；返回 Windows 对话框按钮值。"""
+        message = (
+            "本机无法使用原生窗口，界面已尝试在系统浏览器中打开。\n\n"
+            "如果没有看到界面，请把下面的地址复制到浏览器中打开：\n\n"
+            f"{self.url}\n\n"
+            "· 「重试」：再次尝试自动打开浏览器；\n"
+            "· 「取消」：退出程序（不会在后台保留进程）。\n\n"
+            "提示：本地服务已经就绪，地址一旦被打开即可正常使用。"
+        )
+        try:
+            import ctypes
+
+            # MB_ICONINFORMATION(0x40) | MB_RETRYCANCEL(0x05) | MB_SETFOREGROUND | MB_TOPMOST
+            return int(
+                ctypes.windll.user32.MessageBoxW(
+                    None, message, f"{APP_NAME_EN} · 请在浏览器中打开界面", 0x40 | 0x05 | 0x10000 | 0x40000
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - 弹窗失败时由调用方兜底
+            _logger.debug("提示窗口创建失败：%s", exc)
+            return None
+
     def apply_theme(self, theme: str) -> None:
         """浏览器外壳无法影响浏览器自身的标题栏，仅记录。"""
         _logger.debug("浏览器外壳忽略原生主题同步：%s", theme)
 
     def show_window(self) -> None:
-        try:
-            webbrowser.open(self.url, new=0, autoraise=True)
-        except Exception as exc:  # noqa: BLE001
-            _logger.debug("唤起浏览器失败：%s", exc)
+        if not self._open_browser(self.url):
+            _logger.warning("无法唤起浏览器，请手动访问：%s", self.url)
 
     def quit(self) -> None:
         self.ctx.shutdown_event.set()
+
+
+def _mask_url(url: str) -> str:
+    """日志中脱敏入口地址里的令牌（与 app.py 共用同一实现）。"""
+    return mask_token_in_url(url)
 
 
 def create_shell(ctx: AppContext, settings: RuntimeSettings, url: str) -> ShellAdapter:

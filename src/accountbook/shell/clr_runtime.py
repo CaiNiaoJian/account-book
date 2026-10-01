@@ -109,8 +109,13 @@ def _probe_command(runtime: str) -> list[str]:
     return [sys.executable, "-c", code]
 
 
-def _probe(runtime: str) -> bool:
-    """在子进程中探测指定运行时是否可用。"""
+def _probe(runtime: str) -> tuple[bool, str]:
+    """在子进程中探测指定运行时是否可用。
+
+    返回 ``(是否可用, 失败摘要)``。摘要会被累积到最后一起输出 ——
+    只在 DEBUG 里记一句"不可用"，等于把排障线索埋掉；
+    而全部候选失败时用户需要知道"到底为什么"。
+    """
     command = _probe_command(runtime)
     try:
         # 命令完全由本进程构造（sys.executable + 固定参数），不含任何外部输入
@@ -124,14 +129,17 @@ def _probe(runtime: str) -> bool:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         _logger.debug("CLR 运行时 %s 探测失败（无法执行）：%s", runtime, exc)
-        return False
+        return False, f"无法执行探测进程：{exc}"
 
-    ok = completed.returncode == _PROBE_OK_EXIT_CODE
-    if not ok:
-        # 只记录尾部若干字节，避免把整段堆栈灌进日志
-        detail = (completed.stderr or b"")[-400:].decode("utf-8", errors="replace")
-        _logger.debug("CLR 运行时 %s 不可用（退出码 %s）：%s", runtime, completed.returncode, detail)
-    return ok
+    if completed.returncode == _PROBE_OK_EXIT_CODE:
+        return True, ""
+
+    # 只取堆栈尾部的一小段：够定位，又不会把日志刷屏
+    raw = (completed.stderr or b"").decode("utf-8", errors="replace")
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    detail = lines[-1] if lines else f"退出码 {completed.returncode}"
+    _logger.debug("CLR 运行时 %s 不可用（退出码 %s）：%s", runtime, completed.returncode, raw[-400:])
+    return False, detail
 
 
 def _load_cache(path: Path) -> str | None:
@@ -181,19 +189,30 @@ def resolve_clr_runtime(paths: AppPaths) -> str | None:
         return cached
 
     _logger.info("首次启动：探测可用的 CLR 运行时（候选：%s）", ", ".join(CANDIDATE_RUNTIMES))
+    failures: list[str] = []
     for runtime in CANDIDATE_RUNTIMES:
         # 环境变量必须**在探测之前**设置好：探测子进程通过继承环境变量获得同样的配置，
         # 只有这样才能保证"探测通过的组合"与"真正启动时使用的组合"完全一致。
         _apply_runtime_env(runtime, paths)
-        if _probe(runtime):
+        ok, detail = _probe(runtime)
+        if ok:
             _logger.info("已选定 CLR 运行时：%s", runtime)
             _save_cache(cache_file, runtime)
             return runtime
+        failures.append(f"{runtime}：{detail}")
 
     _logger.warning(
-        "未找到可用的 .NET 运行时，原生窗口不可用。"
-        "请安装 .NET Framework 4.7.2+ 或 .NET 6+ 运行时；"
-        "在此之前应用将以浏览器外壳运行（功能完全一致）。"
+        "未找到可用的 .NET 运行时，原生窗口不可用，将以浏览器外壳运行（功能完全一致）。\n"
+        "    探测结果：\n%s\n"
+        "    可能的原因与对策：\n"
+        "      1) 未安装运行时 → 安装 .NET Framework 4.7.2+ 或 .NET 6+ 桌面运行时；\n"
+        "      2) 程序所在目录被 .NET Framework 判定为『网络位置』\n"
+        "         （网络驱动器、映射盘，或被安全策略/沙箱标记的目录）——\n"
+        "         .NET Framework 会拒绝加载该目录下的程序集。把程序移动到本地磁盘的\n"
+        "         普通目录（例如 C:\\Apps\\AccountBook），删除 %s 后重新启动即可重试；\n"
+        "      3) 安全软件拦截了程序集加载。",
+        "\n".join(f"      · {item}" for item in failures),
+        cache_file,
     )
     # 缓存"无可用运行时"，避免每次启动都重复探测（用户装好运行时后删除该文件即可重试）
     _save_cache(cache_file, None)

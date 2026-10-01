@@ -293,3 +293,94 @@ create_shell()
 * ECharts 尚未接入（P2），当前趋势图为标注了 `DEMO` 水印的自研 SVG 示意。
 
 上述每一条都在 [PLAN.md](PLAN.md) 中有明确的阶段归属。
+
+---
+
+## 9. 可见性保证：为什么"点了没反应"必须被根除
+
+桌面应用最糟糕的失败模式不是崩溃，而是**静默**：用户双击图标，什么都没发生，
+任务管理器里却躺着一个常驻进程。本章记录本项目为此建立的三条硬性保证。
+
+### 9.1 三类原因（都实际发生过）
+
+| # | 现象 | 根因 |
+|---|---|---|
+| 1 | 没有原生窗口 | .NET 运行时不可用，或程序位于 .NET Framework 判定为"网络位置"的目录（见 9.3） |
+| 2 | 也没有浏览器窗口 | `webbrowser.open()` **谎报成功** —— 在 Windows 上它基于 `os.startfile`，只要 URL 关联存在就返回 `True`，即便浏览器进程根本没起来（实测：返回 `True` 而系统中没有任何浏览器进程） |
+| 3 | 连托盘图标都没有 | `pystray` 在受限令牌下 `ChangeWindowMessageFilterEx` 报 WinError 5，托盘线程创建窗口失败 |
+
+三者叠加时，应用就变成了完全不可见的后台进程。
+
+### 9.2 三条保证
+
+**保证一：不信返回值，只信可见窗口。**
+`BrowserShell._wait_for_app_window()` 用 `EnumWindows` 枚举可见顶层窗口，
+查找标题含 :data:`accountbook.APP_WINDOW_TITLE` 的那个。
+判定必须精确到**应用自己的标记**，而不是"任意浏览器窗口"或"标题里含应用名" ——
+实测中另一个应用的窗口标题恰好含"记账本"，宽松判定会把"没打开"误判为"已打开"。
+
+**保证二：确认不了就给可见出口。**
+只要窗口未被确认，立即弹出可复制的地址提示框（重试 / 取消）。
+用户点「取消」→ 应用**主动退出**，绝不留下无人知晓的进程。浏览器成功打开时不会弹窗。
+
+**保证三：进程一定会结束。**
+`__main__._finalize_exit()` 在退出前检查非守护线程：
+pystray 的 `run_detached` 创建的是**非守护线程**，其窗口创建失败时 `icon.stop()`
+无法让它结束，解释器就会一直等它 —— 日志已打"已退出"而进程仍在运行。
+因此收尾时先记录残留线程（便于定位），再 `os._exit` 强制结束，并保留业务退出码。
+
+日志中的对应痕迹：
+
+```
+WARNING | accountbook.shutdown | 退出时仍有非守护线程存活：Thread-5 (setup_handler)（daemon=False）
+WARNING | accountbook.shutdown | 已强制结束进程，以避免留下用户看不见的后台进程
+```
+
+### 9.3 .NET Framework 的"网络位置"判定（重要排障知识）
+
+**现象**：pythonnet 的 netfx 宿主报 `Failed to resolve Python.Runtime.Loader.Initialize`，
+即便 .NET Framework 4.8 已安装、DLL 也确实是 `.NETStandard v2.0`。
+
+**定位方法**：在 PowerShell 5.1（运行于 .NET Framework）里直接加载该 DLL，
+`FileLoadException.FusionLog` 给出了 .NET 的原话：
+
+> An attempt was made to load an assembly from a **network location** …
+> please enable the **loadFromRemoteSources** switch.
+
+**实测结论**：**同一个文件**的加载结果取决于所在目录 ——
+
+| 路径 | `Assembly.LoadFile` |
+|---|---|
+| `C:\Users\…\Temp\…\Python.Runtime.dll` | ✅ OK |
+| `D:\abtest1\Python.Runtime.dll` | ✅ OK |
+| `D:\studyRoom\exercises\dsworkspace\abtestB\X.dll` | ✅ OK |
+| `D:\studyRoom\exercises\dsworkspace\accountbook\abtestC\X.dll` | ❌ FAIL |
+
+即：**触发点是具体目录**，而不是盘符或文件本身（D 盘为本地固定磁盘、
+无网络映射、无重解析点、无 Zone.Identifier 备用数据流）。
+被判定为"网络位置"的目录下，.NET Framework 会拒绝加载其中的程序集。
+
+**影响**：原生窗口需要 netfx 宿主；netfx 无法加载 → 只能退到 coreclr →
+coreclr 下 pywebview 随包的 WebView2 WinForms 封装又因
+`System.Windows.Forms.ContextMenu`（.NET Core 已移除）而失败 → 最终降级为浏览器外壳。
+
+**对策**：把程序放到本地磁盘的普通目录（例如 `C:\Apps\AccountBook`）即可恢复原生窗口 ——
+已实测：同一份打包产物放在工作区外运行时，`已选定 CLR 运行时：netfx`、
+窗口标题 `记账本 · AccountBook 0.1.0`、托盘与数据目录（`%LOCALAPPDATA%`）全部正常
+（见 [docs/screenshots/p0-native-window.png](screenshots/p0-native-window.png)）。
+
+`resolve_clr_runtime()` 在两个候选都失败时会把探测摘要与这条对策一起写进日志，
+避免用户面对一句无从下手的"Python.NET 不可用"。
+
+### 9.4 窗口标记是一份跨层契约
+
+```
+accountbook/__init__.py :: APP_WINDOW_TITLE = "记账本 · AccountBook"
+        ├── web/index.html <title>            （静态首帧）
+        ├── web/src/main.tsx document.title   （运行时，由 boot 数据推导）
+        ├── shell/window.py 原生窗口标题       （"… 0.1.0"）
+        └── shell/window.py 浏览器窗口确认标记 （_wait_for_app_window）
+```
+
+四处必须保持一致，任何一处单独改动都会让"窗口是否出现"的判定失效。
+标记**不跟随界面语言**变化 —— 否则切换语言后窗口确认会立刻失败。

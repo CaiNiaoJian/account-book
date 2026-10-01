@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-__all__ = ["APP_ID", "APP_NAME", "APP_NAME_EN", "BUILD_PHASE", "__version__"]
+__all__ = ["APP_ID", "APP_NAME", "APP_NAME_EN", "APP_WINDOW_TITLE", "BUILD_PHASE", "__version__"]
 
 #: 版本号 —— 单一事实来源。打包脚本与「关于」页均从此处读取。
 #: 版本规则：主.次.修订（主=不兼容的存储结构变更，次=功能阶段，修订=修复）
@@ -34,6 +34,15 @@ APP_NAME_EN = "AccountBook"
 
 #: 应用标识 —— 同时作为 %LOCALAPPDATA% 下的目录名与单实例锁名
 APP_ID = "AccountBook"
+
+#: 窗口/页面标题的**稳定标记**（``记账本 · AccountBook``）。
+#:
+#: 它不只是好看：浏览器外壳需要靠它判断"界面窗口到底出来了没有"。
+#: 用带间隔号的完整串而不是单独的中文名，是因为后者会误判 ——
+#: 实测中另一个应用的窗口标题里恰好含"记账本"，导致把"没打开"误判为"已打开"。
+#: 因此这个常量同时被前端 ``document.title``、原生窗口标题与窗口探测逻辑使用，
+#: 三者必须始终一致。
+APP_WINDOW_TITLE = f"{APP_NAME} · {APP_NAME_EN}"
 
 #: 当前实现阶段 —— 前端用它在侧边栏为未实现功能打「计划于 Pn」标记
 #: 需求 10：明确区分「已实现 / 已预留」，避免用户以为功能缺失是缺陷

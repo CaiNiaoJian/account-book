@@ -33,6 +33,7 @@ from . import APP_NAME_EN, BUILD_PHASE, __version__
 from .api.server import create_app
 from .api.state import AppContext, create_context
 from .config import RuntimeSettings, build_config_store
+from .core.security import mask_token_in_url
 from .core.single_instance import InstanceLock
 from .logging_setup import install_excepthook, setup_logging
 from .paths import AppPaths, get_paths
@@ -309,11 +310,12 @@ def _build_entry_url(ctx: AppContext, settings: RuntimeSettings) -> str:
 
 
 def _mask_token(url: str) -> str:
-    """日志中脱敏令牌：保留前缀便于排查，主体打码。"""
-    if "token=" not in url:
-        return url
-    head, _, token = url.partition("token=")
-    return f"{head}token={token[:6]}…({len(token)} chars)"
+    """日志中脱敏令牌（保留前缀便于排查，主体打码）。
+
+    实现已收敛到 :func:`accountbook.core.security.mask_token_in_url`，
+    避免"某条日志路径忘记打码"这类难以察觉的泄漏。
+    """
+    return mask_token_in_url(url)
 
 
 def _log_banner(paths: AppPaths, settings: RuntimeSettings) -> None:
@@ -326,6 +328,14 @@ def _log_banner(paths: AppPaths, settings: RuntimeSettings) -> None:
     _logger.info(
         "  dev=%s single_instance=%s tray=%s", settings.dev, settings.single_instance, settings.enable_tray
     )
+    # 数据目录的候选尝试记录必须在这里补记一次：
+    # get_paths() 运行在 setup_logging() **之前**，那时还没有 handler，
+    # 逐条失败日志会全部丢失（这正是"用户看不到为什么换了数据目录"的原因）。
+    if paths.data_dir_attempts:
+        _logger.warning("以下数据目录候选不可写，已按顺序跳过：")
+        for attempt in paths.data_dir_attempts:
+            _logger.warning("    · %s", attempt)
+        _logger.warning("当前使用：%s（%s）", paths.data, paths.data_dir_source)
     _logger.info("=" * 74)
 
 

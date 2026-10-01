@@ -99,13 +99,57 @@ def main(argv: list[str] | None = None) -> int:
         2. 再弹一个说明对话框。
     先落盘再弹窗，是因为在自动化环境里对话框可能无人点击而一直阻塞 ——
     哪怕界面卡住，排查者依然能从文件里拿到真相。
+
+    正常返回时还会经过 :func:`_finalize_exit` 做收尾，
+    确保**进程一定会结束**（见该函数的说明）。
     """
     try:
-        return _main(argv)
+        code = _main(argv)
     except SystemExit:
         raise  # argparse 的正常退出路径（--help / --version）
     except BaseException:  # noqa: BLE001 - 引导期必须兜住一切
         return _report_bootstrap_failure()
+
+    return _finalize_exit(code)
+
+
+def _finalize_exit(code: int) -> int:
+    """进程收尾：**保证进程一定会结束**。
+
+    为什么需要它（真实故障）
+    ------------------------
+    实测：日志已经打出"开始退出流程 → 已退出"，但任务管理器里进程仍在运行。
+    原因是托盘（pystray）的线程是**非守护线程**，而 `run_detached` 内部创建它，
+    我们无法把它改成 daemon。当托盘窗口创建失败（受限令牌下会报 WinError 5）时，
+    `icon.stop()` 也无法让该线程结束 —— 于是 Python 主线程结束后，
+    解释器还在等这个线程，进程就一直驻留。
+
+    用户看到的正是"关不掉的隐形进程"，与"点了没反应"是同一类体验灾难。
+
+    处理方式：先记录是哪些线程没退出（便于定位），再强制结束进程。
+    这里刻意用 ``os._exit`` 而不是 ``sys.exit``：后者仍需等非守护线程结束。
+    代价是跳过 atexit（pythonnet 的正常卸载），对本场景无实际影响。
+    """
+    import logging
+    import os
+    import threading
+
+    lingering = [
+        thread
+        for thread in threading.enumerate()
+        if thread is not threading.main_thread() and not thread.daemon and thread.is_alive()
+    ]
+    if not lingering:
+        return code
+
+    logger = logging.getLogger("accountbook.shutdown")
+    for thread in lingering:
+        logger.warning("退出时仍有非守护线程存活：%s（daemon=%s）", thread.name, thread.daemon)
+    logger.warning("已强制结束进程，以避免留下用户看不见的后台进程")
+
+    # 先冲刷日志，再强制退出（os._exit 不会执行任何清理）
+    logging.shutdown()
+    os._exit(code)
 
 
 def _main(argv: list[str] | None) -> int:
