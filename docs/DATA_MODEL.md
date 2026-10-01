@@ -91,6 +91,29 @@
 
 ---
 
+### 2.3 P6 的表
+
+| 表 | 说明 |
+|---|---|
+| `workday_calendar` | 节假日与调休的**例外**（不是 365 行）。`kind` ∈ holiday / makeup_workday / custom_rest / custom_workday；`source` ∈ builtin / user_import / user_edit。**只存例外**的理由：否则"显式标记"与"默认推断"变得无法区分，`coverage_years` 也就失去意义 |
+| `pay_sources` | 薪资来源（软删除 + 部分唯一索引） |
+| `pay_components` | 组成项模板。`calc` ∈ fixed / ratio / formula；`sign` ∈ 1 / -1；`formula` 是 **JSON 表达式树**——工资表是可被导入的数据，`eval()` 会把可导入数据变成任意代码执行入口 |
+| `payday_rules` | 发薪规则。`day_kind` ∈ fixed / month_end / last_workday / nth_workday；`weekend_policy` 与 `holiday_policy` **分开**（很多单位周末顺延、节假日提前） |
+| `payroll_records` | 工资收录表（软删除）。`items` 存**组成项快照**、`insurance_snapshot` 存代扣快照——模板会变，而"去年 3 月那笔是怎么算的"必须能原样复现，因此不指向 `pay_components` 的外键 |
+| `insurance_items` | 险种字典。**只预置名称与结构标志，比例一律 0**（比例因城市与年份而异）。`personal_to_account` / `employer_to_account` 是制度性事实 |
+| `insurance_profiles` | 参保档案。社保基数与公积金基数**分开**（很多城市两者不同）；软删除 |
+| `insurance_contributions` | 逐月缴纳。唯一键 `(profile_id, period, item_id)` 保证**幂等**——调度器与工资收录都可能触发它，重复写入会让余额凭空翻倍。存比例快照与 `raw_base_minor`（未收敛前的基数） |
+| `insurance_withdrawals` | 提取记录。余额是算出来的，因此提取必须是记录而不是"改余额" |
+| `insurance_annual_statements` | 年度对账。`expected_*` 是用户从官方对账单抄来的数；`interest_minor` 由用户录（**利率因城市与年份而异，不预置**） |
+| `scheduled_tasks` | 定时任务。`rule` 是 JSON（频率 / 日期 / 时刻，月度复用工作日逻辑）；`catch_up_policy` ∈ startup / immediate / record_only |
+| `task_runs` | 每次执行留痕。`caught_up` 区分"当时就跑了"与"事后补的" |
+| `pending_prompts` | 待办提示（强弹与漏填拦截）。`snooze_count` / `max_snooze` 限制"稍后提醒"，`skip_reason` 让"跳过"留痕——**只有"必须填"会让真的没工资的月份变成死锁，而用户会开始随手填假数据** |
+| `notifications` | 通知中心。比提示轻：只读、不拦截 |
+
+**利息不落库到险种。** `insurance_annual_statements.interest_minor` 是账户级总额，
+个人账户余额按 `Σ计入账户的缴纳 + Σ利息 − Σ提取` 派生。
+**已知限制**：利息归属未分配到具体险种（见 `docs/ACCEPTANCE_P6.md` §4）。
+
 ## 3. 关键设计决策
 
 ### 3.1 余额不落库，每次聚合
