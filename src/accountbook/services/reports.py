@@ -425,7 +425,7 @@ def _section_breakdown(session: Session, start: date, end: date) -> dict[str, An
                 empty="这一期没有收入",
             ),
             _note(
-                "口径：支出按**分账优先**归集 —— 一笔流水若拆了分账，"
+                "口径：支出按分账优先归集 —— 一笔流水若拆了分账，"
                 "金额算在各分账的分类上而不是主分类，因此这里的合计等于实际支出总额。"
                 "转账与余额调整不计入收支。"
             ),
@@ -522,7 +522,7 @@ def _section_budgets(session: Session, end: date) -> dict[str, Any]:
         )
     blocks.append(
         _note(
-            "口径：跨期预算（年度 / 季度）按**整期**统计已用金额，"
+            "口径：跨期预算（年度 / 季度）按整期统计已用金额，"
             "因此它的「已用」可能大于本期区间内的支出 —— 这是预算本身的口径，不是错误。"
         )
     )
@@ -683,7 +683,7 @@ def _section_calendar(session: Session, start: date, end: date) -> dict[str, Any
                 ]
             ),
             _note(
-                "口径：只统计**今天及之前**的日子。未来的日期算成「漏记」是在冤枉用户。"
+                "口径：只统计今天及之前的日子。未来的日期算成「漏记」是在冤枉用户。"
                 "「有记录」指当天至少有一笔支出 —— 只有收入的日子不会被算作已登记支出。"
             ),
         ],
@@ -717,7 +717,7 @@ def _section_payroll(session: Session, start: date, end: date) -> dict[str, Any]
     没记录时说"录一次工资就有了"，而不是说"功能还没做"。
 
     口径上与别处的三处一致：
-    * 入账金额用**实发**（账户里真正到账的）；
+    * 入账金额用实发（账户里真正到账的）；
     * 单位缴纳单列，因为它是没进工资卡但确实属于你的"隐形收入"；
     * 作废/跳过的记录不计入合计。
     """
@@ -743,8 +743,7 @@ def _section_payroll(session: Session, start: date, end: date) -> dict[str, Any]
         )
         blocks.append(
             _note(
-                "五险一金的**比例因城市与年份而异**，系统不会预置 —— "
-                "请在设置里按当地政策填写，否则合计会是 0。"
+                "五险一金的比例因城市与年份而异，系统不会预置 —— 请在设置里按当地政策填写，否则合计会是 0。"
             )
         )
         return {"key": "payroll", "title": "薪酬与五险一金", "blocks": blocks}
@@ -897,7 +896,7 @@ def _section_payroll(session: Session, start: date, end: date) -> dict[str, Any]
 
     blocks.append(
         _note(
-            "口径：入账金额用**实发**（账户里真正到账的）；作废与跳过的记录不计入合计；"
+            "口径：入账金额用实发（账户里真正到账的）；作废与跳过的记录不计入合计；"
             "单位缴纳单列，因为它没进工资卡。利息由你在年度对账里录入 —— "
             "利率因城市与年份而异，系统不预置。"
         )
@@ -1063,7 +1062,7 @@ def _section_insights(session: Session, start: date, end: date, totals: dict[str
     return {
         "key": "insights",
         "title": "异常与亮点",
-        "blocks": [_text("以下结论由**离线规则**得出，没有联网、也没有调用任何模型。")],
+        "blocks": [_text("以下结论由离线规则得出，没有联网、也没有调用任何模型。")],
         "insights": insights[: _MAX_EVIDENCE + 8],
     }
 

@@ -151,6 +151,30 @@ export interface ChartProps {
  *   2. **主题切换**必须重建实例 —— ECharts 的主题在初始化时固化；
  *   3. **组件卸载**必须 dispose，否则切页几次就泄漏一批 canvas。
  */
+/**
+ * 判断一份 ECharts option 里有没有**非零**数据。
+ *
+ * 只看 series：坐标轴、图例这些即使没有数据也一直存在。
+ * 数值可能是数字，也可能是 `{ value }` 或 `{ value_minor }` 形式的对象。
+ */
+function optionHasData(option: Record<string, unknown>): boolean {
+  const series = option?.series
+  if (!Array.isArray(series)) return false
+  for (const entry of series) {
+    const data = (entry as { data?: unknown[] })?.data
+    if (!Array.isArray(data)) continue
+    for (const point of data) {
+      const raw =
+        typeof point === 'number'
+          ? point
+          : ((point as { value?: unknown })?.value ?? (point as { value_minor?: unknown })?.value_minor)
+      const value = Number(raw)
+      if (Number.isFinite(value) && value !== 0) return true
+    }
+  }
+  return false
+}
+
 export function Chart({ option, height = 240, className, emptyLabel, onEvents, onReady }: ChartProps) {
   const theme = useTheme()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -196,10 +220,22 @@ export function Chart({ option, height = 240, className, emptyLabel, onEvents, o
     }
   }, [onEvents, theme])
 
+  // **`emptyLabel` 只有在真的没有数据时才显示。**
+  //
+  // 早先的实现是"提供了就渲染"，于是它变成一层永远盖在图上方的蒙版 ——
+  // 瀑布图上就出现过"这个来源还没有组成项，因此应发合计是 0"
+  // 叠在一张画得好好的图上。名字叫 emptyLabel，语义就该是 empty 才显示。
+  //
+  // 判断口径：把所有 series 的 data 摊平，
+  // 没有数据点、或所有数值都是 0，才算空。
+  // 不能用"data 数组长度为 0" —— 瀑布图在零金额时仍有
+  // 「应发」「实发」两个值为 0 的点。
+  const isEmpty = !optionHasData(option)
+
   return (
     <div className={className} style={{ position: 'relative' }}>
       <div ref={containerRef} style={{ width: '100%', height }} />
-      {emptyLabel ? (
+      {emptyLabel && isEmpty ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-ab-footnote text-label-3">
           {emptyLabel}
         </div>

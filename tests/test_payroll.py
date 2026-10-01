@@ -585,3 +585,73 @@ class TestPaydayAndOverview:
         assert results[0]["source_name"] == "主职"
         dates = [item["pay_date"] for item in results]
         assert dates == sorted(dates)
+
+
+class TestDraftExclusion:
+    """**草稿不计入应发/实发。**
+
+    "实发"的含义是"这笔钱到账了"，而草稿还没有 ——
+    把草稿算进实发会让用户以为钱已经到了。
+    报表那一节（`_section_payroll`）本来就是这么做的，这里必须一致。
+    """
+
+    def _source(self, session):
+        from accountbook.services import accounts as accounts_service
+        from accountbook.services import payroll as payroll_service
+
+        account = accounts_service.list_accounts(session)[0]
+        source = payroll_service.add_source(session, name="主职", account_id=account.id)
+        payroll_service.create_component(
+            session,
+            name="基本工资",
+            kind="basic",
+            source_id=source.id,
+            amount_minor=1_000_000,
+            sort_order=1,
+        )
+        return source
+
+    def test_draft_is_excluded_from_totals(self, session) -> None:
+        from accountbook.services import payroll as payroll_service
+
+        source = self._source(session)
+        period = "2026-10"
+        payroll_service.create_record(session, source.id, period, pay_date=date(2026, 10, 15))
+        body = payroll_service.payroll_overview(session, period=period)
+
+        # 草稿不进合计……
+        assert body["current"]["gross_minor"] == 0
+        assert body["current"]["net_minor"] == 0
+        assert body["current"]["count"] == 0
+        # ……但必须能被看到，否则用户会奇怪"工资表里明明有一条"
+        assert body["draft_count"] == 1
+        assert len(body["pending"]) == 1
+        assert body["pending"][0]["period"] == period
+
+    def test_filled_record_counts_and_clears_the_draft(self, session) -> None:
+        from accountbook.services import payroll as payroll_service
+
+        source = self._source(session)
+        period = "2026-10"
+        record = payroll_service.create_record(session, source.id, period, pay_date=date(2026, 10, 15))
+        payroll_service.fill_record(session, record.id, create_transaction=False)
+        body = payroll_service.payroll_overview(session, period=period)
+
+        assert body["current"]["gross_minor"] == 1_000_000
+        assert body["current"]["count"] == 1
+        assert body["draft_count"] == 0
+        assert body["pending"] == []
+
+    def test_skipped_record_is_in_neither(self, session) -> None:
+        """跳过的既不是已入账、也不是待填写。"""
+        from accountbook.services import payroll as payroll_service
+
+        source = self._source(session)
+        period = "2026-10"
+        record = payroll_service.create_record(session, source.id, period, pay_date=date(2026, 10, 15))
+        payroll_service.skip_record(session, record.id, reason="这个月没有工资")
+        body = payroll_service.payroll_overview(session, period=period)
+
+        assert body["current"]["count"] == 0
+        assert body["draft_count"] == 0
+        assert body["pending"] == []

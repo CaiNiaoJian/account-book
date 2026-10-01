@@ -835,8 +835,14 @@ def payroll_overview(session: Session, *, period: str, history_months: int = 12)
     比出来只是"没有变化"。
     """
     period = _ensure_period(period)
-    records = [row for row in list_records(session, limit=500) if row.status != "skipped"]
+    # **只统计已入账的记录。** "实发"的含义是"这笔钱到账了"，
+    # 而草稿还没有 —— 把草稿算进实发会让用户以为钱已经到了。
+    # 草稿的数量单独返回，界面据此说明"另有 N 条未计入"。
+    all_rows = list_records(session, limit=500)
+    records = [row for row in all_rows if row.status == "filled"]
+    draft_rows = [row for row in all_rows if row.status == "draft"]
     current = [row for row in records if row.period == period]
+    current_drafts = [row for row in draft_rows if row.period == period]
     same_month_last_year = [row for row in records if row.period == _shift_year(period, -1)]
 
     def totals(rows: list[PayrollRecord]) -> dict[str, int]:
@@ -879,6 +885,9 @@ def payroll_overview(session: Session, *, period: str, history_months: int = 12)
     return {
         "period": period,
         "current": {**current_totals, "count": len(current)},
+        # 本期未填写的草稿条数：界面据此说明"另有 N 条未计入"，
+        # 否则用户会奇怪为什么工资表里有的记录没进合计
+        "draft_count": len(current_drafts),
         "same_month_last_year": {**last_year_totals, "count": len(same_month_last_year)},
         "delta": {
             "gross": delta(current_totals["gross_minor"], last_year_totals["gross_minor"]),
@@ -887,7 +896,9 @@ def payroll_overview(session: Session, *, period: str, history_months: int = 12)
             "insurance": delta(current_totals["insurance_minor"], last_year_totals["insurance_minor"]),
         },
         "months": months,
-        "pending": [serialize_record(row) for row in records if row.status == "draft"],
+        # **必须从 draft_rows 取，不能从 records 取** ——
+        # records 现在只含已入账的记录，从它里面筛草稿会永远得到空列表。
+        "pending": [serialize_record(row) for row in draft_rows],
     }
 
 

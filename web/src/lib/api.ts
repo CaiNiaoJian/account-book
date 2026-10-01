@@ -1781,6 +1781,8 @@ export interface PayrollOverview {
   current: { gross_minor: number; net_minor: number; tax_minor: number; insurance_minor: number; count: number }
   same_month_last_year: { gross_minor: number; net_minor: number; tax_minor: number; insurance_minor: number; count: number }
   delta: { gross: number | null; net: number | null; tax: number | null; insurance: number | null }
+  /** 本期未填写的草稿条数：它们**不计入** current（那笔钱还没到账） */
+  draft_count: number
   /** 逐月趋势，**已补全没有记录的月份** */
   months: { period: string; gross_minor: number; net_minor: number; count: number }[]
   pending: PayrollRecord[]

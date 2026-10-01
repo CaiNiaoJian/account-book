@@ -169,6 +169,57 @@ function comparisonOption(
   }
 }
 
+/**
+ * 逐月应发 / 实发堆叠柱。
+ *
+ * 刻意**不复用** `cumulativeOption`：那个的图例是"个人 / 单位"（五险一金的口径），
+ * 套到工资上会显示成"个人 = 实发、单位 = 扣减" —— 名不副实。
+ * 一张图例说错的图比没有图更糟。
+ */
+function monthlyPayrollOption(
+  rows: { period: string; gross_minor: number; net_minor: number }[],
+  formatValue: (value: unknown) => string,
+  labels: { net: string; deduction: string },
+) {
+  const axis = resolveToken('text-3')
+  const split = resolveToken('separator')
+  return {
+    grid: { left: 8, right: 16, top: 28, bottom: 6, containLabel: true },
+    tooltip: { trigger: 'axis', valueFormatter: (value: number) => formatValue(value) },
+    legend: { top: 0, textStyle: { color: axis, fontSize: 11 } },
+    xAxis: {
+      type: 'category',
+      data: rows.map((row) => row.period),
+      axisLabel: { color: axis, fontSize: 10, hideOverlap: true },
+      axisLine: { lineStyle: { color: split } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: axis, fontSize: 10, formatter: (value: number) => formatValue(value) },
+      splitLine: { lineStyle: { color: split, type: 'dashed' } },
+    },
+    series: [
+      {
+        name: labels.net,
+        type: 'bar',
+        stack: 'pay',
+        barMaxWidth: 26,
+        itemStyle: { color: resolveToken('accent') },
+        data: rows.map((row) => row.net_minor),
+      },
+      {
+        name: labels.deduction,
+        type: 'bar',
+        stack: 'pay',
+        barMaxWidth: 26,
+        itemStyle: { color: resolveToken('warning') },
+        data: rows.map((row) => row.gross_minor - row.net_minor),
+      },
+    ],
+  }
+}
+
 /** 逐年累积堆叠柱：缴纳是长期积累，单月数字没什么意义 */
 function cumulativeOption(
   rows: { period: string; personal_minor: number; employer_minor: number }[],
@@ -266,6 +317,14 @@ export function PayrollPage() {
   const [fillFor, setFillFor] = useState<PayrollRecord | null>(null)
   const [insuranceOpen, setInsuranceOpen] = useState(false)
 
+  // 深链：弹窗是 React 状态、没有自己的 URL，因此截图脚本（以及未来的
+  // 分享链接）需要一个入口。P5 时台账就因为没有它而只拍到了空状态。
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('insurance') === '1') setInsuranceOpen(true)
+    if (params.get('components') === '1') setComponentOpen(true)
+  }, [])
+
   const formatValue = useCallback(
     (value: unknown) => displayMinor(Number(value ?? 0), 'CNY', privacy),
     [privacy],
@@ -337,6 +396,11 @@ export function PayrollPage() {
       }
     })()
   }, [sourceId, period])
+
+  /** 本期的草稿：它们**不计入**上面的应发/实发（那笔钱还没到账） */
+  const periodDrafts = records.filter(
+    (row) => row.period === period && row.status === 'draft',
+  )
 
   const periodRecord = records.find(
     (row) => row.source_id === sourceId && row.period === period,
@@ -471,8 +535,10 @@ export function PayrollPage() {
               {payday ? (
                 <div className="flex flex-wrap items-center gap-1.5">
                   {/* **置信度必须标出来**：一个"看起来算过"的日期会被用户当真 */}
+                  {/* 这一条可能很长（"按规则算出，但该年节假日未录入"），
+                      因此允许换行 —— 不换行时它会挤到右侧的状态 chip 上 */}
                   <span
-                    className={`ab-chip ${payday.confidence === 'exact' ? '!text-positive' : '!text-warning'}`}
+                    className={`ab-chip !whitespace-normal ${payday.confidence === 'exact' ? '!text-positive' : '!text-warning'}`}
                     data-active
                   >
                     <Icon
@@ -631,17 +697,19 @@ export function PayrollPage() {
               <div className="mt-3">
                 <div className="ab-section-label !px-0">{t('payroll.monthly')}</div>
                 <Chart
-                  option={cumulativeOption(
-                    overview.months.map((item) => ({
-                      period: item.period,
-                      personal_minor: item.net_minor,
-                      employer_minor: item.gross_minor - item.net_minor,
-                    })),
-                    formatValue,
-                  )}
+                  option={monthlyPayrollOption(overview.months, formatValue, {
+                    net: t('payroll.net'),
+                    deduction: t('payroll.deductionTotal'),
+                  })}
                   height={180}
                 />
               </div>
+
+              {periodDrafts.length > 0 ? (
+                <p className="mt-2 rounded-ab-sm bg-warning/10 px-3 py-2 text-ab-caption1 text-label-2">
+                  {t('payroll.draftsExcluded', { count: periodDrafts.length })}
+                </p>
+              ) : null}
 
               {records.length > 0 ? (
                 <div className="mt-3 overflow-x-auto">
@@ -1585,8 +1653,12 @@ function RateRow({
     <div className="flex flex-wrap items-center gap-2 rounded-ab-sm bg-surface-2/50 px-2 py-1.5">
       <span className="min-w-0 flex-1">
         <span className="text-ab-footnote text-label-2">{item.name}</span>
-        {/* **"还没填"与"0%"是两件事** */}
-        {!item.rates_filled ? (
+        {/* 三种状态要分清：**已停用** / 比例待填写 / 已填。
+            已停用是用户的主动选择（当地不缴这一项），
+            把它显示成"比例待填写"会让他以为漏填了。 */}
+        {!item.enabled ? (
+          <span className="ml-1.5 text-ab-caption1 text-label-3">{t('payroll.itemDisabled')}</span>
+        ) : !item.rates_filled ? (
           <span className="ml-1.5 text-ab-caption1 text-warning">{t('payroll.rateUnfilled')}</span>
         ) : null}
         {item.note ? (

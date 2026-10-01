@@ -40,6 +40,11 @@ export function SchedulerPage() {
   const [skipReason, setSkipReason] = useState('')
   const [taskOpen, setTaskOpen] = useState(false)
 
+  // 深链：同上，弹窗没有自己的 URL
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('new') === '1') setTaskOpen(true)
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
