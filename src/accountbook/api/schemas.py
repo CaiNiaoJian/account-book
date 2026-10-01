@@ -1101,6 +1101,125 @@ class GoalContributionsOut(BaseModel):
 
 
 # -----------------------------------------------------------------------------
+# P5：台账与报表
+# -----------------------------------------------------------------------------
+class LedgerEntryOut(BaseModel):
+    transaction_id: int
+    occurred_at: str
+    tz_offset_minutes: int
+    type: str
+    direction: str
+    amount_minor: int
+    signed_minor: int
+    running_balance_minor: int
+    payee: str
+    note: str
+    status: str
+    source: str
+    category_id: int | None = None
+    category_name: str
+    category_kind: str
+    to_account_id: int | None = None
+    #: 转账时是对方账户名；非转账为空
+    counterparty: str
+    #: 'self' = 本账户是转出方；'incoming' = 本账户收到了这笔转账
+    leg: str
+    project_id: int | None = None
+    member_id: int | None = None
+    has_splits: bool
+
+
+class LedgerCheckOut(BaseModel):
+    internal_ok: bool
+    aggregate_ok: bool
+    covers_today: bool
+    opening_balance_minor: int
+    closing_balance_minor: int
+    recomputed_closing_minor: int
+    #: 截至区间末的余额（台账期末应当等于它）
+    aggregate_balance_minor: int
+    #: 全时段余额。与上面不同说明有未来日期的流水
+    all_time_balance_minor: int
+    difference_minor: int
+    excluded_void_count: int
+    future_dated_count: int
+    future_dated_net_minor: int
+    balanced: bool
+
+
+class LedgerOut(BaseModel):
+    account_id: int
+    account_name: str
+    currency: str
+    start: str
+    end: str
+    opening_balance_minor: int
+    closing_balance_minor: int
+    entries: list[LedgerEntryOut]
+    count: int
+    inflow_minor: int
+    outflow_minor: int
+    check: LedgerCheckOut
+
+
+class TrialBalanceOut(BaseModel):
+    account_count: int
+    balance_change_minor: int
+    income_minor: int
+    expense_minor: int
+    adjust_net_minor: int
+    expected_change_minor: int
+    transfer_neutral_ok: bool
+    broken_transfer_ids: list[int]
+    balanced: bool
+
+
+class ReconcileRequest(RequestModel):
+    actual_balance_minor: int
+    as_of: date | None = None
+    note: str = Field(default="", max_length=200)
+    #: 为假时只算差异、不落库（界面需要能先给用户看）
+    create_adjustment: bool = True
+
+
+class ReconcileOut(BaseModel):
+    account_id: int
+    account_name: str
+    as_of: str
+    computed_balance_minor: int
+    actual_balance_minor: int
+    difference_minor: int
+    created_transaction_id: int | None = None
+    new_balance_minor: int
+
+
+class ReportOut(BaseModel):
+    """报告文档。
+
+    这里**刻意不把 sections / insights 建成精确模型**：
+    块（block）是报告的唯一扩展点，新增一种展示只需要加一个块类型。
+    把每种块都建成 Pydantic 模型会让"加一个块类型"变成"改三处"
+    （schema、导出、渲染器），而那正是这个设计想避免的。
+    顶层字段仍然精确 —— 它们是稳定契约，块不是。
+    """
+
+    schema_: str = Field(alias="schema")
+    kind: str
+    title: str
+    subtitle: str
+    period: dict[str, Any]
+    generated_at: str
+    currency: str
+    cover: dict[str, Any]
+    kpis: list[dict[str, Any]]
+    sections: list[dict[str, Any]]
+    insights: list[dict[str, Any]]
+    notes: list[str]
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+# -----------------------------------------------------------------------------
 # 元数据
 # -----------------------------------------------------------------------------
 class CurrencyOut(BaseModel):
