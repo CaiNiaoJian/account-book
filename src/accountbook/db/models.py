@@ -1245,3 +1245,157 @@ class PayrollRecord(Base, TimestampMixin, SoftDeleteMixin):
     skip_reason: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     filled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+# -----------------------------------------------------------------------------
+# P6：五险一金
+# -----------------------------------------------------------------------------
+class InsuranceItem(Base, TimestampMixin):
+    """险种字典。**只预置名称，不预置比例**（见模块 docstring）。
+
+    `rate_bps` 用万分比整数存：0.5% = 50，12% = 1200。
+    """
+
+    __tablename__ = "insurance_items"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('pension', 'medical', 'unemployment', 'injury', 'maternity', "
+            "'housing_fund', 'supplementary_fund', 'enterprise_annuity', "
+            "'critical_illness', 'other')",
+            name="kind",
+        ),
+        CheckConstraint("personal_rate_bps BETWEEN 0 AND 10000", name="personal_rate"),
+        CheckConstraint("employer_rate_bps BETWEEN 0 AND 10000", name="employer_rate"),
+        UniqueConstraint("kind", "city", name="uq_insurance_items_kind_city"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    name: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: 城市（空表示全国通用 / 用户只维护一套）
+    city: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    #: 个人缴纳比例（万分比）。0 表示用户还没填 —— 界面上要提示这一点
+    personal_rate_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    employer_rate_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 个人缴纳的部分是否进入个人账户（养老个人部分、医疗个人部分、公积金）
+    personal_to_account: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: 单位缴纳的部分是否也进入个人账户（公积金是，养老单位部分不是）
+    employer_to_account: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: 保底 / 封顶基数。空表示不设限
+    floor_base_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cap_base_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: 该险种是否用公积金基数而不是社保基数
+    use_housing_base: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class InsuranceProfile(Base, TimestampMixin, SoftDeleteMixin):
+    """参保档案：谁、在哪个城市、按什么基数缴、从什么时候起。"""
+
+    __tablename__ = "insurance_profiles"
+    __table_args__ = (CheckConstraint("social_base_minor >= 0 AND housing_base_minor >= 0", name="bases"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(48), nullable=False)
+    member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id"), nullable=True)
+    city: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    employer: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    #: 社保缴纳基数（月）
+    social_base_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 公积金缴纳基数（月）。很多城市与社保基数不同，因此分开
+    housing_base_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 生效区间。为空表示一直有效
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class InsuranceContribution(Base, TimestampMixin):
+    """逐月缴纳记录。
+
+    与 `payroll_records` 一样存**快照**（比例与基数都记下来）：
+    比例每年会变，"去年 3 月养老扣了多少、按什么比例"必须能原样复现。
+    """
+
+    __tablename__ = "insurance_contributions"
+    __table_args__ = (
+        CheckConstraint("base_minor >= 0", name="base"),
+        CheckConstraint("personal_minor >= 0 AND employer_minor >= 0", name="amounts"),
+        UniqueConstraint("profile_id", "period", "item_id", name="uq_insurance_contributions_unique"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("insurance_profiles.id"), nullable=False, index=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("insurance_items.id"), nullable=False, index=True)
+    #: 归属期间，形如 '2026-10'
+    period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    #: 实际使用的基数（已按保底/封顶收敛）
+    base_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 未收敛前的基数，用于解释"为什么和我填的不一样"
+    raw_base_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 当时使用的比例快照
+    personal_rate_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    employer_rate_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    personal_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    employer_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 计入个人账户的金额（个人部分 + 单位划入部分）
+    to_account_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 来源：'payroll'（由工资收录表写入）/ 'manual'
+    source: Mapped[str] = mapped_column(String(12), nullable=False, default="manual")
+    payroll_record_id: Mapped[int | None] = mapped_column(ForeignKey("payroll_records.id"), nullable=True)
+    transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"), nullable=True)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class InsuranceWithdrawal(Base, TimestampMixin):
+    """提取记录（购房、租房、退休、医疗、离职销户）。
+
+    余额是算出来的，因此提取也必须是一条记录而不是"改个余额"。
+    """
+
+    __tablename__ = "insurance_withdrawals"
+    __table_args__ = (
+        CheckConstraint(
+            "reason IN ('purchase', 'rent', 'retirement', 'medical', 'settlement', 'other')",
+            name="reason",
+        ),
+        CheckConstraint("amount_minor > 0", name="amount"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("insurance_profiles.id"), nullable=False, index=True)
+    #: 从哪个账户提（公积金账户 / 医疗账户 / 养老账户）
+    item_id: Mapped[int] = mapped_column(ForeignKey("insurance_items.id"), nullable=False, index=True)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    occurred_at: Mapped[date] = mapped_column(Date, nullable=False)
+    reason: Mapped[str] = mapped_column(String(16), nullable=False, default="other")
+    transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"), nullable=True)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class InsuranceAnnualStatement(Base, TimestampMixin):
+    """年度对账。
+
+    `expected_*` 是用户从**官方对账单**上抄来的数；系统只负责算出差异并展示。
+    利息也在这里录 —— 利率因城市与年份而异，我不编（见模块 docstring）。
+    """
+
+    __tablename__ = "insurance_annual_statements"
+    __table_args__ = (UniqueConstraint("profile_id", "year", name="uq_insurance_statements_year"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("insurance_profiles.id"), nullable=False, index=True)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: 官方对账单上的全年个人缴纳合计（为空表示还没抄）
+    expected_personal_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: 官方对账单上的全年单位缴纳合计
+    expected_employer_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: 官方对账单上的年末账户余额
+    expected_balance_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: 当年计入的利息（用户录，利率不编）
+    interest_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reconciled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
