@@ -21,6 +21,8 @@ from accountbook.db.models import AssetOhlc
 from accountbook.db.seed import ensure_seed_data
 from accountbook.db.session import Database
 from accountbook.services import accounts as accounts_service
+from accountbook.services import assets as assets_service
+from accountbook.services import attachments as attachments_service
 from accountbook.services import budgets as budgets_service
 from accountbook.services import categories as categories_service
 from accountbook.services import daily as daily_service
@@ -991,3 +993,145 @@ class TestBatchEdit:
         report = transactions_service.batch_delete(session, [*ids[:1], 999_999])
         assert report["count"] == 1
         assert len(report["skipped"]) == 1
+
+
+# 只用魔数前缀构造样本：这里要测的是"类型识别"，不需要真实的图片数据。
+# 用一个真 PNG 的完整字节反而会让用例里出现一长串无意义的十六进制。
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+PDF_BYTES = b"%PDF-1.4\n" + b"0" * 64
+
+
+class TestAttachments:
+    def _txn(self, session: Session):
+        return _spend(session, day=TODAY, amount=1_000)
+
+    def test_save_png_round_trip(self, session: Session, tmp_path: Path) -> None:
+        txn = self._txn(session)
+        row = attachments_service.save(
+            session, tmp_path, PNG_BYTES, filename="发票.png", transaction_id=txn.id
+        )
+        assert row.mime == "image/png"
+        assert row.file_ref.endswith(".png")
+        # 相对引用里不能有用户可控片段 —— 这是路径穿越的根本防线
+        assert "发票" not in row.file_ref
+        assert row.original_name == "发票.png"
+        assert attachments_service.serialize(row)["url"] == f"/api/attachments/{row.id}"
+
+        assert attachments_service.read_bytes(tmp_path, row) == PNG_BYTES
+        assert len(attachments_service.list_for_transaction(session, txn.id)) == 1
+
+    def test_extension_comes_from_magic_not_from_name(self, session: Session, tmp_path: Path) -> None:
+        """改名成 .png 的 PDF 会被识别为 PDF 并存成 .pdf。
+
+        只看扩展名会被 ``evil.png`` 绕过；只看魔数又无法决定扩展名。
+        两者都查，并以**魔数**为准。
+        """
+        txn = self._txn(session)
+        row = attachments_service.save(
+            session, tmp_path, PDF_BYTES, filename="伪装.png", transaction_id=txn.id
+        )
+        assert row.mime == "application/pdf"
+        assert row.file_ref.endswith(".pdf")
+
+    def test_rejects_unknown_type(self, session: Session, tmp_path: Path) -> None:
+        txn = self._txn(session)
+        with pytest.raises(ValidationError, match="不支持的文件类型"):
+            attachments_service.save(
+                session, tmp_path, b"MZ\x90\x00" + b"0" * 32, filename="evil.exe", transaction_id=txn.id
+            )
+
+    def test_rejects_svg(self, session: Session, tmp_path: Path) -> None:
+        """SVG 是可执行内容（内嵌脚本），在本地 webview 里渲染等于开 XSS 口子。"""
+        txn = self._txn(session)
+        svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+        with pytest.raises(ValidationError, match="不支持的文件类型"):
+            attachments_service.save(session, tmp_path, svg, filename="x.svg", transaction_id=txn.id)
+
+    def test_rejects_oversize(self, session: Session, tmp_path: Path) -> None:
+        txn = self._txn(session)
+        big = PNG_BYTES + b"0" * (attachments_service.MAX_BYTES + 1)
+        with pytest.raises(ValidationError, match="上限"):
+            attachments_service.save(session, tmp_path, big, filename="big.png", transaction_id=txn.id)
+
+    def test_rejects_empty(self, session: Session, tmp_path: Path) -> None:
+        txn = self._txn(session)
+        with pytest.raises(ValidationError, match="为空"):
+            attachments_service.save(session, tmp_path, b"", filename="x.png", transaction_id=txn.id)
+
+    def test_content_addressing_deduplicates_file(self, session: Session, tmp_path: Path) -> None:
+        """同一份内容上传两次只占一份磁盘，但保留两条记录。"""
+        first = self._txn(session)
+        second = _spend(session, day=TODAY - timedelta(days=1), amount=2_000)
+        one = attachments_service.save(
+            session, tmp_path, PNG_BYTES, filename="a.png", transaction_id=first.id
+        )
+        two = attachments_service.save(
+            session, tmp_path, PNG_BYTES, filename="b.png", transaction_id=second.id
+        )
+        assert one.file_ref == two.file_ref
+        assert one.id != two.id
+
+    def test_delete_keeps_file_when_still_referenced(self, session: Session, tmp_path: Path) -> None:
+        """删掉一条记录不该把另一条共用的文件也弄丢。"""
+        first = self._txn(session)
+        second = _spend(session, day=TODAY - timedelta(days=1), amount=2_000)
+        one = attachments_service.save(
+            session, tmp_path, PNG_BYTES, filename="a.png", transaction_id=first.id
+        )
+        two = attachments_service.save(
+            session, tmp_path, PNG_BYTES, filename="b.png", transaction_id=second.id
+        )
+        path = attachments_service.resolve_path(tmp_path, one.file_ref)
+        assert path.exists()
+
+        attachments_service.delete(session, tmp_path, one.id)
+        assert path.exists(), "仍有一条记录引用它，文件必须保留"
+        assert attachments_service.read_bytes(tmp_path, two) == PNG_BYTES
+
+        attachments_service.delete(session, tmp_path, two.id)
+        assert not path.exists(), "最后一条记录删除后文件才该消失"
+
+    def test_path_traversal_is_blocked(self, tmp_path: Path) -> None:
+        """``file_ref`` 被手工改坏时，读取仍必须被拦在 root 之内。
+
+        写入时路径由我们生成，但导入 / 插件 / 手改 DB 都可能塞进越界值。
+        """
+        for bad in ("../outside.png", "a/../../outside.png", "a/../../../etc/passwd"):
+            with pytest.raises(ValidationError, match="越界"):
+                attachments_service.resolve_path(tmp_path, bad)
+
+    def test_missing_file_gives_clear_error(self, session: Session, tmp_path: Path) -> None:
+        """数据库有记录但磁盘上没有时，给明确错误而不是让 FileNotFoundError 冒上去。"""
+        txn = self._txn(session)
+        row = attachments_service.save(session, tmp_path, PNG_BYTES, filename="a.png", transaction_id=txn.id)
+        attachments_service.resolve_path(tmp_path, row.file_ref).unlink()
+        with pytest.raises(NotFoundError, match="丢失"):
+            attachments_service.read_bytes(tmp_path, row)
+
+    def test_unknown_transaction_rejected(self, session: Session, tmp_path: Path) -> None:
+        with pytest.raises(NotFoundError):
+            attachments_service.save(session, tmp_path, PNG_BYTES, filename="a.png", transaction_id=999_999)
+
+    def test_soft_deleted_transaction_rejected(self, session: Session, tmp_path: Path) -> None:
+        """不能给已删除的流水挂附件 —— 它马上会被恢复成一笔"缺附件"的记录。"""
+        txn = self._txn(session)
+        transactions_service.delete_transaction(session, txn.id)
+        with pytest.raises(NotFoundError):
+            attachments_service.save(session, tmp_path, PNG_BYTES, filename="a.png", transaction_id=txn.id)
+
+    def test_card_attachment_needs_artwork(self, session: Session, tmp_path: Path) -> None:
+        with pytest.raises(ValidationError, match="卡面"):
+            attachments_service.save(session, tmp_path, PNG_BYTES, filename="c.png", kind="card")
+
+    def test_card_attachment_lands_in_cards_folder(self, session: Session, tmp_path: Path) -> None:
+        artwork = assets_service.list_card_artworks(session)[0]
+        row = attachments_service.save(
+            session, tmp_path, PNG_BYTES, filename="c.png", kind="card", card_artwork_id=artwork.id
+        )
+        assert row.file_ref.startswith("cards/")
+        assert len(attachments_service.list_for_artwork(session, artwork.id)) == 1
+
+    def test_zero_data_list_is_empty(self, session: Session) -> None:
+        """没有任何附件时返回空数组，而不是报错。"""
+        txn = self._txn(session)
+        assert attachments_service.list_for_transaction(session, txn.id) == []

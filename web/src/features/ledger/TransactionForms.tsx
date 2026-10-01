@@ -24,6 +24,7 @@ import { api, ApiError, type Transaction, type TransactionType } from '@/lib/api
 import { localDayKey, parseAmountToMinor, displayMinor } from '@/lib/format'
 import { usePreferences } from '@/app/preferences'
 
+import { TransactionAttachments } from './Attachments'
 import { CategoryPicker, Modal, TagPicker } from './parts'
 import { useLedger } from './store'
 
@@ -894,6 +895,9 @@ export function TransactionEditor({
             ) : null}
           </div>
         ) : null}
+
+        {/* 附件（P1 尾巴 T5）。新流水还没有 id，因此这里会写明"保存后才能添加" */}
+        <TransactionAttachments transactionId={transaction?.id ?? null} />
       </div>
     </Modal>
   )

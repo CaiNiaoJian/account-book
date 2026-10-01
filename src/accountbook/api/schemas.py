@@ -489,6 +489,8 @@ class CardArtworkOut(BaseModel):
     kind: str
     spec: dict[str, Any]
     file_ref: str
+    #: 用户上传的卡面图片地址；为空表示用 spec 里的自绘渐变
+    image_url: str | None = None
     author: str
     license: str
     sort_order: int
@@ -824,6 +826,23 @@ class BatchUpdateRequest(RequestModel):
 
 class BatchDeleteRequest(RequestModel):
     ids: list[int] = Field(min_length=1, max_length=500)
+
+
+# -----------------------------------------------------------------------------
+# P1 尾巴：附件
+# -----------------------------------------------------------------------------
+class AttachmentOut(BaseModel):
+    id: int
+    kind: str
+    transaction_id: int | None = None
+    card_artwork_id: int | None = None
+    original_name: str
+    mime: str
+    size_bytes: int
+    sha256: str
+    created_at: str | None = None
+    #: 可直接用于 <img src> 的同源地址
+    url: str
 
 
 # -----------------------------------------------------------------------------

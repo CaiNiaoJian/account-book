@@ -94,6 +94,33 @@ const JSON_HEADERS: HeadersInit = {
   Authorization: `Bearer ${boot.token}`,
 }
 
+/**
+ * 上传一个文件。
+ *
+ * 不能用上面的 `request()`：它总是带上 `Content-Type: application/json`，
+ * 而那会让服务端按 JSON 解析二进制体。这里刻意**不设 Content-Type**，
+ * 由浏览器按文件自身类型填充 —— 服务端也只信魔数，不依赖这个头
+ * （客户端可以随便写这个头，它只是给服务端一个提示）。
+ */
+async function upload<T>(path: string, file: File): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    body: file,
+  })
+  if (!response.ok) {
+    let detail = response.statusText
+    try {
+      const body = await response.json()
+      detail = extractMessage(body, detail)
+    } catch {
+      /* 非 JSON 响应时沿用状态文本 */
+    }
+    throw new ApiError(response.status, detail)
+  }
+  return (await response.json()) as T
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response
   try {
@@ -719,6 +746,8 @@ export interface CardArtwork {
   kind: 'builtin' | 'uploaded'
   /** 卡面配方：{ stops: [[颜色, 位置]], texture, ink, sheen } */
   spec: { stops: [string, number][]; texture: string; ink: string; sheen: number }
+  /** 用户上传的卡面图片；为空表示用 spec 里的自绘渐变 */
+  image_url: string | null
   file_ref: string
   author: string
   license: string
@@ -1063,6 +1092,28 @@ export const api = {
       body: JSON.stringify({ ids }),
     }),
 
+  // ---- P1 尾巴：附件 --------------------------------------------------------
+  /**
+   * 上传附件。
+   *
+   * 用**原始字节体**而不是 multipart：少一个依赖风险，
+   * 前端只要把 `File` 直接当 body 传即可。
+   */
+  uploadTransactionAttachment: (transactionId: number, file: File) =>
+    upload<AttachmentItem>(
+      `/api/attachments/transactions/${transactionId}${query({ filename: file.name })}`,
+      file,
+    ),
+  uploadCardImage: (artworkId: number, file: File) =>
+    upload<AttachmentItem>(
+      `/api/attachments/card-artworks/${artworkId}${query({ filename: file.name })}`,
+      file,
+    ),
+  transactionAttachments: (transactionId: number) =>
+    request<AttachmentItem[]>(`/api/attachments/transactions/${transactionId}`),
+  deleteAttachment: (id: number) =>
+    request<void>(`/api/attachments/${id}`, { method: 'DELETE' }),
+
   /** 指标参数。口径说明页直接渲染它，参数一改说明页自动跟着变 */
   klineParams: () => request<KlineParams>('/api/kline/params'),
 
@@ -1123,6 +1174,20 @@ export interface RepaymentPlan {
   has_plan: boolean
   /** 恒为真：分摊表是估算 */
   is_estimate: boolean
+}
+
+export interface AttachmentItem {
+  id: number
+  kind: 'transaction' | 'card'
+  transaction_id: number | null
+  card_artwork_id: number | null
+  original_name: string
+  mime: string
+  size_bytes: number
+  sha256: string
+  created_at: string | null
+  /** 可直接用于 `<img src>` 的同源地址（会话 Cookie 会带上） */
+  url: string
 }
 
 export interface TrashItem {

@@ -23,6 +23,7 @@ import { api, ApiError, type AssetWall, type CardArtwork, type CardItem } from '
 import { displayMinor } from '@/lib/format'
 import { usePreferences } from '@/app/preferences'
 
+import { CardImageUpload } from '@/features/ledger/Attachments'
 import { Modal } from '@/features/ledger/parts'
 import { useLedger } from '@/features/ledger/store'
 
@@ -35,8 +36,21 @@ const CARD_NETWORKS = [
   { value: 'jcb', label: 'JCB' },
 ]
 
-/** 卡面配方 → CSS。渐变角度固定 135°，与信用卡的斜向光泽一致 */
+/**
+ * 卡面配方 → CSS。渐变角度固定 135°，与信用卡的斜向光泽一致。
+ *
+ * **优先用用户上传的图片**：有图片时铺满卡面（cover），没有才回落到
+ * spec 里的自绘渐变 —— 两条路都通，用户不必为了"想用自己那张卡的照片"
+ * 而放弃自绘卡面（反之亦然）。
+ */
 function cardStyle(artwork: CardArtwork | undefined, fallbackColor: string): React.CSSProperties {
+  if (artwork?.image_url) {
+    return {
+      backgroundImage: `url(${artwork.image_url})`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+    }
+  }
   if (!artwork) {
     return { background: `linear-gradient(135deg, rgb(var(--ab-${fallbackColor})), rgb(var(--ab-${fallbackColor}) / 0.72))` }
   }
@@ -283,6 +297,16 @@ export function CardsPage() {
               ))}
             </div>
           </div>
+
+          {form.card_style ? (
+            <CardImageUpload
+              artworkId={(wall?.artworks ?? []).find((item) => item.key === form.card_style)?.id ?? 0}
+              imageUrl={
+                (wall?.artworks ?? []).find((item) => item.key === form.card_style)?.image_url ?? null
+              }
+              onUploaded={() => void Promise.all([load(), refreshLedger()])}
+            />
+          ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>

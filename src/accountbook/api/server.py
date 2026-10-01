@@ -33,6 +33,7 @@ from ..core.security import COOKIE_NAME, is_loopback_host, origin_allowed
 from .deps import register_domain_error_handler
 from .routes import accounts as accounts_routes
 from .routes import assets as assets_routes
+from .routes import attachments as attachments_routes
 from .routes import calendar as calendar_routes
 from .routes import categories as categories_routes
 from .routes import kline as kline_routes
@@ -176,6 +177,7 @@ def create_app(ctx: AppContext) -> FastAPI:
     app.include_router(planning_routes.router)
     app.include_router(templates_routes.router)
     app.include_router(trash_routes.router)
+    app.include_router(attachments_routes.router)
     app.include_router(kline_routes.router)
 
     # ---- 前端托管（必须最后注册，因为它是通配路由） -------------------------

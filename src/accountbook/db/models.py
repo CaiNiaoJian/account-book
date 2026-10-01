@@ -815,3 +815,40 @@ class TransactionTemplate(Base, TimestampMixin, SoftDeleteMixin):
     #: 使用次数与最近使用时间：模板栏按"最常用"排序比按创建时间更符合直觉
     usage_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# -----------------------------------------------------------------------------
+# P1 尾巴：附件
+# -----------------------------------------------------------------------------
+class Attachment(Base, TimestampMixin):
+    """附件元数据。文件本身落在 ``<data>/attachments/`` 下。
+
+    为什么不存绝对路径：数据目录可能被用户搬走（便携模式、换盘），
+    也可能在备份恢复后落到别处。存**相对引用** + 由装配层提供根目录，
+    换位置时什么都不用改。
+
+    ``file_ref`` 的内容是 ``<年>/<月>/<内容哈希前 16 位><扩展名>``，
+    **不含任何用户可控片段** —— 这是路径穿越的根本防线。
+    """
+
+    __tablename__ = "attachments"
+    __table_args__ = (
+        CheckConstraint("kind IN ('transaction', 'card')", name="kind"),
+        CheckConstraint("size_bytes >= 0", name="size"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(12), nullable=False, default="transaction")
+    transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transactions.id"), nullable=True, index=True
+    )
+    card_artwork_id: Mapped[int | None] = mapped_column(
+        ForeignKey("card_artworks.id"), nullable=True, index=True
+    )
+    file_ref: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: 原始文件名，只用于展示
+    original_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    mime: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 内容哈希：重复上传时用于去重，也让"文件被换过"可被检测
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, default="")

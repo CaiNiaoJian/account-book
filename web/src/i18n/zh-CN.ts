@@ -821,6 +821,17 @@ export const zhCN = {
       void: '作废',
     },
   },
+  attachments: {
+    title: '附件',
+    add: '添加附件',
+    uploading: '上传中…',
+    hint: '支持 PNG / JPEG / WebP / GIF / PDF，单个不超过 10 MB。文件存放在本地数据目录的 attachments 下，不会上传到任何地方。',
+    saveFirst: '保存这笔流水之后就可以添加附件（发票、小票照片）。',
+    cardImage: '卡面图片',
+    noImage: '自绘',
+    uploadImage: '换成图片',
+    cardImageHint: '上传一张图片作为卡面；不传则使用上面的自绘配色。图片只存在本地。',
+  },
   design: {
     iconGroup: {
       food: '餐饮',

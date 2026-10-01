@@ -847,6 +847,17 @@ export const enUS = {
       void: 'Void',
     },
   },
+  attachments: {
+    title: 'Attachments',
+    add: 'Add attachment',
+    uploading: 'Uploading…',
+    hint: 'PNG / JPEG / WebP / GIF / PDF, up to 10 MB each. Files stay in the attachments folder of your local data directory and are never uploaded anywhere.',
+    saveFirst: 'Save this transaction first, then you can attach receipts or invoices.',
+    cardImage: 'Card image',
+    noImage: 'Drawn',
+    uploadImage: 'Use an image',
+    cardImageHint: 'Upload an image to use as the card face; leave it empty to keep the drawn colours. Images stay local.',
+  },
   design: {
     iconGroup: {
       food: 'Food',

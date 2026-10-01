@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from ..core.domain import AccountType
 from ..core.errors import ConflictError, NotFoundError, ProtectedEntityError, ValidationError
-from ..db.models import Account, CardArtwork, Institution
+from ..db.models import Account, Attachment, CardArtwork, Institution
 from . import accounts as accounts_service
 from . import audit
 
@@ -97,6 +97,16 @@ def wall(session: Session, *, include_archived: bool = False) -> dict[str, Any]:
     )
     institutions = {item.key: item for item in list_institutions(session)}
     accounts_by_id = {account.id: account for account in accounts}
+    all_artworks = list_card_artworks(session)
+    # 一次查出所有卡面图片，避免"列出 8 个卡面"变成 8 次查询
+    artwork_images = {
+        row.card_artwork_id: f"/api/attachments/{row.id}"
+        for row in session.scalars(
+            select(Attachment)
+            .where(Attachment.kind == "card", Attachment.card_artwork_id.is_not(None))
+            .order_by(Attachment.id)
+        ).all()
+    }
 
     groups: dict[str, list[dict[str, Any]]] = {key: [] for key, _ in ACCOUNT_GROUPS}
     available_minor = 0
@@ -153,7 +163,7 @@ def wall(session: Session, *, include_archived: bool = False) -> dict[str, Any]:
             "credit_available_minor": max(0, credit_limit_minor - credit_used_minor),
         },
         "institutions": [serialize_institution(item) for item in institutions.values()],
-        "artworks": [serialize_artwork(item) for item in list_card_artworks(session)],
+        "artworks": [serialize_artwork(item, image_url=artwork_images.get(item.id)) for item in all_artworks],
     }
 
 
@@ -346,7 +356,13 @@ def delete_institution(session: Session, institution_id: int) -> None:
 # -----------------------------------------------------------------------------
 # 卡面
 # -----------------------------------------------------------------------------
-def serialize_artwork(item: CardArtwork) -> dict[str, Any]:
+def serialize_artwork(item: CardArtwork, *, image_url: str | None = None) -> dict[str, Any]:
+    """卡面。
+
+    ``image_url`` 由调用方注入（``wall`` 会一次查出全部卡面图片）——
+    让本函数自己去查附件表会在"列出 8 个卡面"时产生 8 次查询，
+    而且会把 assets 服务与附件表绑在一起。
+    """
     return {
         "id": item.id,
         "key": item.key,
@@ -354,6 +370,8 @@ def serialize_artwork(item: CardArtwork) -> dict[str, Any]:
         "kind": item.kind,
         "spec": item.spec,
         "file_ref": item.file_ref,
+        # 用户上传的卡面图片地址；为 None 表示用 spec 里的自绘渐变
+        "image_url": image_url,
         "author": item.author,
         "license": item.license,
         "sort_order": item.sort_order,
