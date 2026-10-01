@@ -480,6 +480,238 @@ export interface DayDetail {
   transactions: Transaction[]
 }
 
+export type RecurringFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly'
+
+export interface RecurringRule {
+  id: number
+  name: string
+  enabled: boolean
+  type: 'expense' | 'income' | 'transfer'
+  account_id: number
+  to_account_id: number | null
+  category_id: number | null
+  amount_minor: number
+  currency: string
+  payee: string
+  note: string
+  frequency: RecurringFrequency
+  interval: number
+  by_month_day: number | null
+  by_weekday: number | null
+  start_date: string
+  end_date: string | null
+  /** 下次应生成日。由服务端推算，前端不重复计算 */
+  next_due_date: string | null
+  last_posted_on: string | null
+  auto_post: boolean
+  lead_days: number
+  generated_count: number
+}
+
+export interface UpcomingRule {
+  rule_id: number
+  name: string
+  type: string
+  amount_minor: number
+  currency: string
+  due_date: string
+  days_until: number
+  overdue: boolean
+  auto_post: boolean
+}
+
+export interface PostDueReport {
+  date: string
+  created: { rule_id: number; name: string; date: string; amount_minor: number; type: string }[]
+  skipped: {
+    rule_id: number
+    name: string
+    reason: string
+    limit?: number
+    next_due_date?: string
+  }[]
+  dry_run: boolean
+}
+
+export type BudgetPeriod = 'weekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom'
+
+export interface BudgetStatus {
+  id: number
+  name: string
+  scope: 'total' | 'category'
+  category_id: number | null
+  /** 分类预算的分类名，由接口补齐（服务层不碰展示文案） */
+  category_name?: string
+  period: BudgetPeriod
+  currency: string
+  amount_minor: number
+  carryover_minor: number
+  available_minor: number
+  spent_minor: number
+  /** 可以为负（超支）。刻意不夹到 0 */
+  remaining_minor: number
+  /** 可以大于 1。刻意不夹到 1 —— "用掉 130%" 与 "用掉 100%" 是不同处境 */
+  ratio: number
+  over: boolean
+  alert: boolean
+  alert_threshold: number
+  enabled: boolean
+  note: string
+  start: string
+  end: string
+  days_total: number
+  days_left: number
+  daily_allowance_minor: number
+  is_current: boolean
+}
+
+export interface BudgetOverview {
+  date: string
+  items: BudgetStatus[]
+  total: BudgetStatus | null
+  category_budgets: BudgetStatus[]
+  alerts: BudgetStatus[]
+  has_budget: boolean
+}
+
+export interface Budget {
+  id: number
+  name: string
+  scope: 'total' | 'category'
+  category_id: number | null
+  period: BudgetPeriod
+  amount_minor: number
+  currency: string
+  start_date: string | null
+  end_date: string | null
+  rollover: boolean
+  carryover_minor: number
+  alert_threshold: number
+  enabled: boolean
+  note: string
+}
+
+export interface DebtStatus {
+  id: number
+  name: string
+  kind: 'lend' | 'borrow'
+  counterparty: string
+  principal_minor: number
+  currency: string
+  account_id: number | null
+  mirror_account_id: number | null
+  start_date: string
+  due_date: string | null
+  annual_rate_bps: number
+  status: 'active' | 'settled' | 'written_off'
+  settled_at: string | null
+  note: string
+  paid_principal_minor: number
+  paid_interest_minor: number
+  paid_total_minor: number
+  payment_count: number
+  /** 可以为负（多还了）。不夹到 0，否则用户对不上账 */
+  remaining_minor: number
+  progress: number
+  overdue: boolean
+  days_until_due: number | null
+  /** 按年化利率估算的每日利息。界面上必须写明"估算" */
+  estimated_daily_interest_minor: number
+}
+
+export interface DebtOverview {
+  date: string
+  items: DebtStatus[]
+  receivable: DebtStatus[]
+  payable: DebtStatus[]
+  summary: {
+    receivable_minor: number
+    payable_minor: number
+    net_minor: number
+    active_count: number
+    overdue_count: number
+    settled_count: number
+  }
+  overdue: DebtStatus[]
+  upcoming: DebtStatus[]
+  has_debt: boolean
+}
+
+export interface Debt {
+  id: number
+  name: string
+  kind: 'lend' | 'borrow'
+  counterparty: string
+  principal_minor: number
+  currency: string
+  account_id: number | null
+  mirror_account_id: number | null
+  start_date: string
+  due_date: string | null
+  annual_rate_bps: number
+  status: string
+  settled_at: string | null
+  note: string
+}
+
+export interface DebtPayment {
+  id: number
+  debt_id: number
+  amount_minor: number
+  principal_minor: number
+  interest_minor: number
+  occurred_at: string
+  tz_offset_minutes: number
+  account_id: number | null
+  transaction_id: number | null
+  note: string
+}
+
+export type KlinePeriod = 'day' | 'week' | 'month' | 'year'
+
+export interface KlineBar {
+  period_start: string
+  period_end: string
+  open_minor: number
+  high_minor: number
+  low_minor: number
+  close_minor: number
+  /** 周期内资金流动总额（收入 + 支出），不是余额 */
+  volume_minor: number
+  tx_count: number
+  /** 均线；样本不足时为 null —— 不缩短窗口，否则"MA60"在开头其实是 MA3 */
+  ma: Record<string, number | null>
+  dif: number | null
+  dea: number | null
+  macd: number | null
+  rsi: number | null
+  /** 从区间内历史最高点回落的幅度（负数或 0） */
+  drawdown: number | null
+}
+
+export interface KlineResponse {
+  period: KlinePeriod
+  start: string
+  end: string
+  /** 为了指标收敛而额外多取的根数；这些根不会出现在 bars 里 */
+  warmup_bars: number
+  params: {
+    ma_windows: number[]
+    macd: { fast: number; slow: number; signal: number }
+    rsi_period: number
+  }
+  bars: KlineBar[]
+  count: number
+}
+
+export interface KlineParams {
+  ma_windows: number[]
+  macd: { fast: number; slow: number; signal: number }
+  rsi_period: number
+  warmup_bars: number
+  periods: string[]
+}
+
 export interface CardArtwork {
   id: number
   key: string
@@ -720,4 +952,61 @@ export const api = {
     spec: Record<string, unknown>
     kind?: string
   }) => request<CardArtwork>('/api/card-artworks', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // ---- P1 收尾：周期记账 ---------------------------------------------------
+  recurringRules: (params: { include_disabled?: boolean } = {}) =>
+    request<RecurringRule[]>(`/api/recurring${query(params)}`),
+  recurringUpcoming: (withinDays = 7) =>
+    request<{ items: UpcomingRule[]; count: number }>(
+      `/api/recurring/upcoming${query({ within_days: withinDays })}`,
+    ),
+  createRecurringRule: (payload: Record<string, unknown>) =>
+    request<RecurringRule>('/api/recurring', { method: 'POST', body: JSON.stringify(payload) }),
+  updateRecurringRule: (id: number, payload: Record<string, unknown>) =>
+    request<RecurringRule>(`/api/recurring/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteRecurringRule: (id: number) => request<void>(`/api/recurring/${id}`, { method: 'DELETE' }),
+  /**
+   * 生成到期流水。
+   *
+   * ``dryRun`` 只报告将要生成什么 —— 界面必须先让用户看到后果，
+   * 尤其是补记多期的时候。
+   */
+  postRecurringDue: (params: { on?: string; ruleId?: number; dryRun?: boolean } = {}) =>
+    request<PostDueReport>(
+      `/api/recurring/post${query({ on: params.on, rule_id: params.ruleId, dry_run: params.dryRun })}`,
+      { method: 'POST' },
+    ),
+
+  // ---- P1 收尾：预算 -------------------------------------------------------
+  budgets: (on?: string) => request<BudgetOverview>(`/api/budgets${query({ on })}`),
+  createBudget: (payload: Record<string, unknown>) =>
+    request<Budget>('/api/budgets', { method: 'POST', body: JSON.stringify(payload) }),
+  updateBudget: (id: number, payload: Record<string, unknown>) =>
+    request<Budget>(`/api/budgets/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteBudget: (id: number) => request<void>(`/api/budgets/${id}`, { method: 'DELETE' }),
+
+  // ---- P1 收尾：债务与应收应付 ---------------------------------------------
+  debts: (on?: string) => request<DebtOverview>(`/api/debts${query({ on })}`),
+  createDebt: (payload: Record<string, unknown>) =>
+    request<Debt>('/api/debts', { method: 'POST', body: JSON.stringify(payload) }),
+  updateDebt: (id: number, payload: Record<string, unknown>) =>
+    request<Debt>(`/api/debts/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteDebt: (id: number) => request<void>(`/api/debts/${id}`, { method: 'DELETE' }),
+  debtPayments: (id: number) => request<DebtPayment[]>(`/api/debts/${id}/payments`),
+  addDebtPayment: (id: number, payload: Record<string, unknown>) =>
+    request<DebtPayment>(`/api/debts/${id}/payments`, { method: 'POST', body: JSON.stringify(payload) }),
+  deleteDebtPayment: (paymentId: number) =>
+    request<void>(`/api/debts/payments/${paymentId}`, { method: 'DELETE' }),
+  settleDebt: (id: number, status: string) =>
+    request<Debt>(`/api/debts/${id}/settle`, { method: 'POST', body: JSON.stringify({ status }) }),
+
+  // ---- P3：净值 K 线 -------------------------------------------------------
+  /**
+   * K 线数据。**指标由服务端算好**（并且带预热区间）——
+   * 前端自己算 MA/MACD 的话，这一页与任何其它地方的 MACD 迟早会不一样。
+   */
+  kline: (params: { period?: KlinePeriod; start?: string; end?: string; indicators?: boolean } = {}) =>
+    request<KlineResponse>(`/api/kline${query(params)}`),
+  /** 指标参数。口径说明页直接渲染它，参数一改说明页自动跟着变 */
+  klineParams: () => request<KlineParams>('/api/kline/params'),
 }

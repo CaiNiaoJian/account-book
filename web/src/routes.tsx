@@ -23,6 +23,9 @@ import { AboutPage } from '@/pages/About'
 import { AccountsPage } from '@/pages/Accounts'
 import { CalendarPage } from '@/pages/Calendar'
 import { CardsPage } from '@/pages/Cards'
+import { KlinePage } from '@/pages/Kline'
+import { MetricsPage } from '@/pages/Metrics'
+import { BudgetsPage, DebtsPage, RecurringPage } from '@/pages/Planning'
 import { CategoriesPage } from '@/pages/Categories'
 import { DashboardPage } from '@/pages/Dashboard'
 import { PlaceholderPage } from '@/pages/Placeholder'
@@ -41,6 +44,11 @@ const IMPLEMENTED_ROUTES: Record<string, ReactNode> = {
   '/cards': <CardsPage />,
   '/calendar': <CalendarPage />,
   '/statistics': <StatisticsPage />,
+  '/kline': <KlinePage />,
+  '/metrics': <MetricsPage />,
+  '/budgets': <BudgetsPage />,
+  '/recurring': <RecurringPage />,
+  '/debts': <DebtsPage />,
   '/tags': <TagsProjectsPage />,
   '/settings': <SettingsPage />,
   '/about': <AboutPage />,
@@ -52,7 +60,7 @@ const IMPLEMENTED_ROUTES: Record<string, ReactNode> = {
  * 导航徽标据此判断"这一项能不能点" —— 徽标与页面实现共用同一份事实，
  * 因此不可能出现"标着已实现、点进去是占位页"。
  */
-export const IMPLEMENTED_PHASES = new Set(['P0', 'P1'])
+export const IMPLEMENTED_PHASES = new Set(['P0', 'P1', 'P2', 'P3'])
 
 /** 404 页面：保持与占位页一致的视觉语言 */
 function NotFoundPage() {
