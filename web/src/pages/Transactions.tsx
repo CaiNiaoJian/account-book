@@ -24,7 +24,6 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { Icon } from '@/components/Icon'
 import { Card, EmptyState, Kbd, Skeleton } from '@/components/ui'
 import { useVirtualWindow } from '@/components/VirtualList'
-import { staggerContainer, staggerItem } from '@/design/motion'
 import { useI18n } from '@/i18n'
 import {
   api,
@@ -234,6 +233,29 @@ export function TransactionsPage() {
     }
     return totals
   }, [grouped])
+
+  /**
+   * 把「分组标题 + 若干行」**拍平**成一个条目数组，再交给虚拟滚动。
+   *
+   * 只对行做窗口而让标题照旧渲染是不行的：标题的高度就没进前缀和，
+   * 滚动位置的偏移会随着标题数量累积。拍平之后每个条目都参与测量，
+   * 偏移量才是准的。
+   */
+  const listEntries = useMemo(() => {
+    const entries: (
+      | { kind: 'header'; key: string; day: string; income: number; expense: number }
+      | { kind: 'row'; key: string; item: Transaction }
+    )[] = []
+    for (const [day, bucket] of grouped) {
+      const totals = dayTotals.get(day) ?? { income: 0, expense: 0 }
+      entries.push({ kind: 'header', key: `h-${day}`, day, ...totals })
+      for (const item of bucket) entries.push({ kind: 'row', key: `r-${item.id}`, item })
+    }
+    return entries
+  }, [grouped, dayTotals])
+
+  // 估计值取得比实际行高略小：宁可先渲染多几行，也不要出现空白间隙
+  const listVw = useVirtualWindow(listEntries.length, { estimate: 52 })
 
   const rangeLabel = useMemo(() => {
     if (range.start && range.end) return `${range.start} — ${range.end}`
@@ -453,50 +475,49 @@ export function TransactionsPage() {
         />
       ) : (
         <Card flush className="overflow-hidden">
-          <motion.div variants={staggerContainer} initial="hidden" animate="show">
-            {grouped.map(([day, bucket]) => {
-              const totals = dayTotals.get(day) ?? { income: 0, expense: 0 }
-              return (
-                <motion.div key={day} variants={staggerItem}>
-                  <div className="flex items-center justify-between border-b border-separator/50 bg-surface-2/40 px-3 py-1.5">
-                    <span className="text-ab-footnote font-semibold text-label-2">
-                      {relativeDayLabel(day)}
-                      <span className="ml-1.5 font-normal text-label-3">{weekdayShort(day)}</span>
-                    </span>
-                    <span className="flex items-center gap-3 text-ab-caption">
-                      {totals.income > 0 ? (
-                        <span className="ab-tnum text-positive">
-                          +{displayMinor(totals.income, 'CNY', preferences.privacy_mode, { showSymbol: false })}
-                        </span>
-                      ) : null}
-                      {totals.expense > 0 ? (
-                        <span className="ab-tnum text-negative">
-                          -{displayMinor(totals.expense, 'CNY', preferences.privacy_mode, { showSymbol: false })}
-                        </span>
-                      ) : null}
-                    </span>
-                  </div>
-                  {bucket.map((item) => (
+          <div ref={listVw.attach} data-virtual-scroll className="max-h-[70vh] overflow-y-auto">
+            <div style={{ paddingTop: listVw.paddingTop, paddingBottom: listVw.paddingBottom }}>
+              {listEntries.slice(listVw.start, listVw.end).map((entry, offset) => (
+                <div key={entry.key} ref={listVw.measure(listVw.start + offset)}>
+                  {entry.kind === 'header' ? (
+                    <div className="flex items-center justify-between border-b border-separator/50 bg-surface-2/40 px-3 py-1.5">
+                      <span className="text-ab-footnote font-semibold text-label-2">
+                        {relativeDayLabel(entry.day)}
+                        <span className="ml-1.5 font-normal text-label-3">{weekdayShort(entry.day)}</span>
+                      </span>
+                      <span className="flex items-center gap-3 text-ab-caption">
+                        {entry.income > 0 ? (
+                          <span className="ab-tnum text-positive">
+                            +{displayMinor(entry.income, 'CNY', preferences.privacy_mode, { showSymbol: false })}
+                          </span>
+                        ) : null}
+                        {entry.expense > 0 ? (
+                          <span className="ab-tnum text-negative">
+                            -{displayMinor(entry.expense, 'CNY', preferences.privacy_mode, { showSymbol: false })}
+                          </span>
+                        ) : null}
+                      </span>
+                    </div>
+                  ) : (
                     <TransactionRow
-                      key={item.id}
-                      item={item}
-                      categoryName={categoryById(item.category_id)?.name}
-                      category={categoryById(item.category_id)}
-                      transferLike={transferLike(item)}
+                      item={entry.item}
+                      categoryName={categoryById(entry.item.category_id)?.name}
+                      category={categoryById(entry.item.category_id)}
+                      transferLike={transferLike(entry.item)}
                       onEdit={() => {
-                        setEditing(item)
+                        setEditing(entry.item)
                         setEditorOpen(true)
                       }}
-                      onDelete={() => setDeleting(item)}
+                      onDelete={() => setDeleting(entry.item)}
                       selectable={selectMode}
-                      selected={selection.has(item.id)}
-                      onToggleSelect={() => toggleSelect(item.id)}
+                      selected={selection.has(entry.item.id)}
+                      onToggleSelect={() => toggleSelect(entry.item.id)}
                     />
-                  ))}
-                </motion.div>
-              )
-            })}
-          </motion.div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         </Card>
       )}
 
