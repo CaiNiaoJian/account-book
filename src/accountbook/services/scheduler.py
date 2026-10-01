@@ -59,6 +59,7 @@ __all__ = [
     "notify",
     "resolve_prompt",
     "run_due",
+    "run_task_now",
     "skip_prompt",
     "snooze_prompt",
     "task_history",
@@ -473,6 +474,48 @@ def _record_run(
     )
     session.add(run)
     return run
+
+
+def run_task_now(
+    session: Session, task_id: int, *, now: datetime | None = None, dry_run: bool = False
+) -> dict[str, Any]:
+    """立即执行一个任务，**不等计划时刻**。
+
+    为什么需要它：`next_run_at` 总是从 `now()` 往后算，
+    因此通过界面创建的任务永远是"未来的" —— 没有这个入口，
+    用户想手动触发一次发薪流程就做不到（只能等到那天）。
+    执行留痕的 `scheduled_at` 用计划时刻，`caught_up` 标出它提前跑了。
+    """
+    moment = now or datetime.now()
+    task = get_task(session, task_id)
+    scheduled_at = task.next_run_at or moment
+    if task.kind in _NOT_IMPLEMENTED:
+        outcome: dict[str, Any] = {
+            "status": "skipped",
+            "summary": _NOT_IMPLEMENTED[task.kind],
+        }
+    else:
+        handler = _HANDLERS.get(task.kind)
+        if handler is None:
+            outcome = {"status": "skipped", "summary": f"没有 {task.kind} 的处理器"}
+        else:
+            try:
+                outcome = handler(session, task, moment)
+            except Exception as error:  # noqa: BLE001
+                _logger.warning("任务 %s 手动执行失败：%s", task.code, error)
+                outcome = {"status": "failed", "summary": "", "error": str(error)[:300]}
+    if not dry_run:
+        _record_run(session, task, scheduled_at, outcome, True, moment)
+        task.last_run_at = moment
+    session.flush()
+    return {
+        "task_id": task.id,
+        "code": task.code,
+        "scheduled_at": scheduled_at.isoformat(),
+        "manual": True,
+        "caught_up": True,
+        **outcome,
+    }
 
 
 def task_history(session: Session, *, limit: int = 100) -> list[dict[str, Any]]:

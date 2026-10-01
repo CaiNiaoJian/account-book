@@ -1262,6 +1262,224 @@ class AiAnalysisListOut(BaseModel):
 
 
 # -----------------------------------------------------------------------------
+# P6：薪酬
+# -----------------------------------------------------------------------------
+class PaySourceIn(RequestModel):
+    name: str = Field(min_length=1, max_length=64)
+    kind: Literal["salary", "part_time", "bonus", "investment", "rent", "other"] = "salary"
+    employer: str = Field(default="", max_length=80)
+    account_id: int | None = None
+    category_id: int | None = None
+    priority: int = Field(default=5, ge=0, le=9)
+    note: str = Field(default="", max_length=200)
+
+
+class PaySourcePatch(RequestModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    kind: Literal["salary", "part_time", "bonus", "investment", "rent", "other"] | None = None
+    employer: str | None = Field(default=None, max_length=80)
+    account_id: int | None = None
+    category_id: int | None = None
+    enabled: bool | None = None
+    priority: int | None = Field(default=None, ge=0, le=9)
+    sort_order: int | None = None
+    note: str | None = Field(default=None, max_length=200)
+
+
+class PayComponentIn(RequestModel):
+    name: str = Field(min_length=1, max_length=48)
+    kind: Literal[
+        "basic",
+        "performance",
+        "overtime",
+        "meal",
+        "transport",
+        "bonus",
+        "commission",
+        "reimbursement",
+        "pretax_deduction",
+        "tax",
+        "insurance",
+        "other",
+    ] = "other"
+    calc: Literal["fixed", "ratio", "formula"] = "fixed"
+    #: 1 = 加项（进应发），-1 = 减项
+    sign: Literal[-1, 1] = 1
+    amount_minor: int = Field(default=0, ge=0)
+    base_key: Literal["basic", "gross"] = "basic"
+    rate_bps: int = Field(default=0, ge=0, le=100000)
+    #: formula 的表达式树。**不是字符串** —— 工资表是可以导入的数据，
+    #: 字符串求值会把一份可导入的数据变成任意代码执行入口
+    formula: dict[str, Any] = Field(default_factory=dict)
+    source_id: int | None = None
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class PayComponentPatch(RequestModel):
+    name: str | None = Field(default=None, min_length=1, max_length=48)
+    kind: str | None = None
+    calc: Literal["fixed", "ratio", "formula"] | None = None
+    sign: Literal[-1, 1] | None = None
+    amount_minor: int | None = Field(default=None, ge=0)
+    base_key: Literal["basic", "gross"] | None = None
+    rate_bps: int | None = Field(default=None, ge=0, le=100000)
+    formula: dict[str, Any] | None = None
+    sort_order: int | None = None
+    enabled: bool | None = None
+
+
+class PaydayRuleIn(RequestModel):
+    day_of_month: int = Field(default=15, ge=1, le=31)
+    day_kind: Literal["fixed", "month_end", "last_workday", "nth_workday"] = "fixed"
+    nth: int = Field(default=1, ge=1, le=23)
+    weekend_policy: Literal["advance", "postpone", "none"] = "advance"
+    holiday_policy: Literal["advance", "postpone", "none"] = "advance"
+    enabled: bool = True
+    remind_at: str = Field(default="09:00", max_length=5)
+    grace_days: int = Field(default=3, ge=0, le=30)
+    require_form: bool = True
+    note: str = Field(default="", max_length=200)
+
+
+class PayrollRecordIn(RequestModel):
+    source_id: int
+    period: str = Field(min_length=7, max_length=7)
+    pay_date: date | None = None
+    #: 逐项覆盖（component_id → 金额），用于"这个月绩效不一样"
+    overrides: dict[int, int] = Field(default_factory=dict)
+    note: str = Field(default="", max_length=200)
+
+
+class PayrollFillIn(RequestModel):
+    create_transaction: bool = True
+    transaction_id: int | None = None
+    occurred_at: datetime | None = None
+
+
+class PayrollSkipIn(RequestModel):
+    reason: str = Field(min_length=1, max_length=200)
+
+
+# -----------------------------------------------------------------------------
+# P6：五险一金
+# -----------------------------------------------------------------------------
+class InsuranceItemIn(RequestModel):
+    kind: str = Field(min_length=1, max_length=24)
+    city: str = Field(default="", max_length=32)
+    name: str | None = Field(default=None, max_length=32)
+    personal_rate_bps: int | None = Field(default=None, ge=0, le=10000)
+    employer_rate_bps: int | None = Field(default=None, ge=0, le=10000)
+    personal_to_account: bool | None = None
+    employer_to_account: bool | None = None
+    floor_base_minor: int | None = Field(default=None, ge=0)
+    cap_base_minor: int | None = Field(default=None, ge=0)
+    use_housing_base: bool | None = None
+    enabled: bool | None = None
+    sort_order: int | None = None
+    note: str | None = Field(default=None, max_length=200)
+
+
+class InsuranceProfileIn(RequestModel):
+    name: str = Field(min_length=1, max_length=48)
+    member_id: int | None = None
+    city: str = Field(default="", max_length=32)
+    employer: str = Field(default="", max_length=80)
+    social_base_minor: int = Field(default=0, ge=0)
+    housing_base_minor: int = Field(default=0, ge=0)
+    effective_from: date | None = None
+    effective_to: date | None = None
+    note: str = Field(default="", max_length=200)
+
+
+class InsuranceProfilePatch(RequestModel):
+    name: str | None = Field(default=None, min_length=1, max_length=48)
+    member_id: int | None = None
+    city: str | None = Field(default=None, max_length=32)
+    employer: str | None = Field(default=None, max_length=80)
+    social_base_minor: int | None = Field(default=None, ge=0)
+    housing_base_minor: int | None = Field(default=None, ge=0)
+    effective_from: date | None = None
+    effective_to: date | None = None
+    enabled: bool | None = None
+    note: str | None = Field(default=None, max_length=200)
+
+
+class InsuranceContributionIn(RequestModel):
+    profile_id: int
+    period: str = Field(min_length=7, max_length=7)
+    #: 为真时覆盖同期已有记录（默认幂等，不重复写入）
+    overwrite: bool = False
+
+
+class InsuranceWithdrawalIn(RequestModel):
+    profile_id: int
+    item_id: int
+    amount_minor: int = Field(gt=0)
+    occurred_at: date
+    reason: Literal["purchase", "rent", "retirement", "medical", "settlement", "other"] = "other"
+    transaction_id: int | None = None
+    note: str = Field(default="", max_length=200)
+
+
+class InsuranceStatementIn(RequestModel):
+    profile_id: int
+    year: int = Field(ge=1900, le=2200)
+    expected_personal_minor: int | None = Field(default=None, ge=0)
+    expected_employer_minor: int | None = Field(default=None, ge=0)
+    expected_balance_minor: int | None = Field(default=None, ge=0)
+    #: 当年计入的利息。**利率因城市与年份而异，系统不预置**
+    interest_minor: int = Field(default=0, ge=0)
+    note: str = Field(default="", max_length=200)
+
+
+# -----------------------------------------------------------------------------
+# P6：定时任务与提醒
+# -----------------------------------------------------------------------------
+class ScheduledTaskIn(RequestModel):
+    code: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=64)
+    kind: Literal[
+        "payday",
+        "insurance",
+        "bill",
+        "repayment",
+        "recurring",
+        "budget_close",
+        "report",
+        "backup",
+        "custom",
+    ] = "custom"
+    rule: dict[str, Any] = Field(default_factory=dict)
+    catch_up_policy: Literal["startup", "immediate", "record_only"] = "startup"
+    enabled: bool = True
+    priority: int = Field(default=5, ge=0, le=9)
+    ref_id: int | None = None
+    note: str = Field(default="", max_length=200)
+
+
+class SnoozeIn(RequestModel):
+    minutes: int = Field(default=30, gt=0, le=1440)
+
+
+class SkipIn(RequestModel):
+    reason: str = Field(min_length=1, max_length=200)
+
+
+class WorkdayOverrideIn(RequestModel):
+    day: date
+    is_workday: bool
+    name: str = Field(default="", max_length=40)
+    note: str = Field(default="", max_length=200)
+
+
+class WorkdayImportIn(RequestModel):
+    #: 粘贴官方公告文本，逐行解析
+    text: str
+    city: str = Field(default="", max_length=32)
+
+
+# -----------------------------------------------------------------------------
 # 元数据
 # -----------------------------------------------------------------------------
 class CurrencyOut(BaseModel):
