@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Icon } from '@/components/Icon'
 import { ReportRenderer } from '@/components/ReportRenderer'
+import { AiAnalysisPanel } from '@/features/reports/AiPanel'
 import { Card, Skeleton } from '@/components/ui'
 import { usePreferences } from '@/app/preferences'
 import { resolveToken } from '@/design/tokens'
@@ -308,7 +309,16 @@ export function ReportsPage() {
           <Skeleton className="h-56 w-full" />
         </div>
       ) : document ? (
-        <ReportRenderer document={document} />
+        <>
+          <ReportRenderer document={document} />
+          {/* AI 面板放在报告之后：分析是对这份报告的解读，先看数据再看结论 */}
+          <AiAnalysisPanel
+            kind={document.kind}
+            start={document.period.start}
+            end={document.period.end}
+            resetKey={`${document.kind}:${document.period.start}:${document.period.end}`}
+          />
+        </>
       ) : (
         <Card>
           <p className="py-6 text-center text-ab-footnote text-label-3">{t('reports.failed')}</p>

@@ -1259,6 +1259,29 @@ export const api = {
     inline?: boolean
   }) => `/api/reports/export${query(params)}`,
 
+// ---- P5：AI 分析 -----------------------------------------------------------
+  aiConfig: () => request<AiConfig>('/api/reports/ai-config'),
+  updateAiConfig: (payload: {
+    enabled?: boolean
+    base_url?: string
+    model?: string
+    timeout_seconds?: number
+    redact?: boolean
+    /** 三态：不传=保持，空串=清除，有值=替换 */
+    api_key?: string
+  }) =>
+    request<AiConfig>('/api/reports/ai-config', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  aiAnalyses: (limit = 20) =>
+    request<{ items: AiAnalysisRecord[]; count: number }>(
+      `/api/reports/ai-analyses${query({ limit })}`,
+    ),
+  /** 分析的 SSE 地址。交给通用 SSE helper 消费，不是普通 JSON 请求。 */
+  aiAnalyzeUrl: (params: { kind: ReportKind; start?: string; end?: string }) =>
+    `/api/reports/ai-analyze${query(params)}`,
+
   /** 指标参数。口径说明页直接渲染它，参数一改说明页自动跟着变 */
   klineParams: () => request<KlineParams>('/api/kline/params'),
 
@@ -1407,6 +1430,42 @@ export interface ParsedDraft {
   matched: Record<string, string>
   unmatched: string[]
   raw: string
+}
+
+// ---- P5：AI 分析 -------------------------------------------------------------
+export interface AiConfig {
+  enabled: boolean
+  base_url: string
+  model: string
+  timeout_seconds: number
+  /** 默认开启脱敏 */
+  redact: boolean
+  /** **只有"填过没有"，没有密钥本身** —— 能被读回来的密钥会出现在每一张截图里 */
+  has_key: boolean
+}
+
+export interface AiAnalysisRecord {
+  id: number
+  report_kind: string
+  period_start: string
+  period_end: string
+  source: 'online' | 'offline'
+  model: string
+  redacted: boolean
+  content: string
+  /** 离线回落的原因：no_key / disabled / network / timeout / server */
+  fallback_reason: string
+  error: string
+  created_at: string | null
+}
+
+/** SSE 的 `meta` 帧 */
+export interface AiStreamMeta {
+  source: 'online' | 'offline'
+  model: string
+  fallback_reason: string
+  error: string
+  analysis_id: number | null
 }
 
 // ---- P5：台账与报表 ----------------------------------------------------------

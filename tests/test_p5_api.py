@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -204,3 +205,76 @@ class TestExportApi:
         assert test_client.get("/api/ledger/trial-balance").status_code == 401
         assert test_client.get("/api/reports").status_code == 401
         assert test_client.get("/api/reports/export").status_code == 401
+
+
+class TestAiApi:
+    """AI 路由层。
+
+    服务层的 `stream_analyze` 已经单测过，但**路由层是另一回事**：
+    `StreamingResponse` 的媒体类型、SSE 帧真的从 HTTP 上出来、
+    以及配置接口不回传密钥 —— 这些只有打一次真实的请求才能确认。
+    """
+
+    def test_config_defaults_and_no_key_leak(self, authed_client) -> None:
+        body = _client(authed_client).get("/api/reports/ai-config").json()
+        assert body["enabled"] is False
+        # 默认值应当是保护性的
+        assert body["redact"] is True
+        assert body["has_key"] is False
+        # **密钥本身永远不出现在响应里**
+        assert "api_key" not in body
+
+    def test_config_api_key_is_three_state(self, authed_client) -> None:
+        client = _client(authed_client)
+        saved = client.put("/api/reports/ai-config", json={"api_key": "sk-abc"}).json()
+        assert saved["has_key"] is True
+        assert "sk-abc" not in client.get("/api/reports/ai-config").text
+
+        # 只改模型不该清掉 key
+        client.put("/api/reports/ai-config", json={"model": "other"})
+        assert client.get("/api/reports/ai-config").json()["has_key"] is True
+
+        # 空串才是清除
+        client.put("/api/reports/ai-config", json={"api_key": ""})
+        assert client.get("/api/reports/ai-config").json()["has_key"] is False
+
+    def test_config_rejects_bad_base_url(self, authed_client) -> None:
+        response = _client(authed_client).put("/api/reports/ai-config", json={"base_url": "api.example.com"})
+        assert response.status_code in {400, 422}
+
+    def test_analyze_streams_sse_frames(self, authed_client) -> None:
+        """端到端：帧真的从 HTTP 上按 SSE 格式出来。"""
+        response = _client(authed_client).post("/api/reports/ai-analyze?kind=monthly")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert response.headers["cache-control"] == "no-store"
+        body = response.text
+        assert body.startswith("event: meta")
+        assert "event: delta" in body
+        assert "event: done" in body
+        # 每帧以空行结束，否则前端的 SSE 解析器会一直等下一块
+        assert "\n\n" in body
+        # 中文以字面量出现（ensure_ascii=False），便于抓包排查
+        assert "\\u" not in body
+
+    def test_analyze_without_key_reports_offline(self, authed_client) -> None:
+        """没配 key 时**仍然有内容**，并如实标注来源。"""
+        body = _client(authed_client).post("/api/reports/ai-analyze?kind=monthly").text
+        meta_line = next(line for line in body.split("\n") if line.startswith("data: ") and "source" in line)
+        meta = json.loads(meta_line[len("data: ") :])
+        assert meta["source"] == "offline"
+        assert meta["fallback_reason"] == "disabled"
+        assert any("离线规则" in line for line in body.split("\n"))
+
+    def test_analysis_history(self, authed_client) -> None:
+        client = _client(authed_client)
+        client.post("/api/reports/ai-analyze?kind=monthly")
+        body = client.get("/api/reports/ai-analyses").json()
+        assert body["count"] >= 1
+        assert body["items"][0]["source"] == "offline"
+        assert body["items"][0]["content"]
+
+    def test_requires_auth(self, client) -> None:
+        test_client, _ = client
+        assert test_client.get("/api/reports/ai-config").status_code == 401
+        assert test_client.post("/api/reports/ai-analyze").status_code == 401

@@ -38,6 +38,8 @@ const UPCOMING: UpcomingItem[] = [
   { icon: 'plugins', labelKey: 'settings.upcomingPlugins', phase: 'P9' },
 ]
 
+import { AiConfigCard } from '@/features/reports/AiPanel'
+
 export function SettingsPage() {
   const { t, language } = useI18n()
   const { preferences, update, syncError } = usePreferences()
@@ -145,6 +147,8 @@ export function SettingsPage() {
 
       {/* ---- 后续设置项 --------------------------------------------------- */}
       <motion.div variants={staggerItem}>
+        <AiConfigCard />
+
         <Card title={t('settings.upcoming')} subtitle={t('settings.upcomingNote')}>
           <ul className="divide-y divide-separator/40">
             {UPCOMING.map((item) => (
