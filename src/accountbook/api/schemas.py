@@ -1220,6 +1220,48 @@ class ReportOut(BaseModel):
 
 
 # -----------------------------------------------------------------------------
+# P5：AI 分析
+# -----------------------------------------------------------------------------
+class AiConfigOut(BaseModel):
+    enabled: bool
+    base_url: str
+    model: str
+    timeout_seconds: float
+    redact: bool
+    #: **只给"填过没有"，不回传密钥本身**
+    has_key: bool
+
+
+class AiConfigUpdate(RequestModel):
+    enabled: bool | None = None
+    base_url: str | None = Field(default=None, max_length=300)
+    model: str | None = Field(default=None, max_length=64)
+    timeout_seconds: float | None = None
+    redact: bool | None = None
+    #: 三态：不传=保持，空串=清除，有值=替换
+    api_key: str | None = Field(default=None, max_length=300)
+
+
+class AiAnalysisOut(BaseModel):
+    id: int
+    report_kind: str
+    period_start: str
+    period_end: str
+    source: str
+    model: str
+    redacted: bool
+    content: str
+    fallback_reason: str
+    error: str
+    created_at: str | None = None
+
+
+class AiAnalysisListOut(BaseModel):
+    items: list[AiAnalysisOut]
+    count: int
+
+
+# -----------------------------------------------------------------------------
 # 元数据
 # -----------------------------------------------------------------------------
 class CurrencyOut(BaseModel):

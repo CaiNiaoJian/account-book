@@ -1023,3 +1023,33 @@ class GoalContribution(Base, TimestampMixin):
     occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     tz_offset_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+# -----------------------------------------------------------------------------
+# P5：AI 分析存档
+# -----------------------------------------------------------------------------
+class AiAnalysis(Base, TimestampMixin):
+    """一次 AI 分析的存档。
+
+    **`payload` 存的是实际发出去的脱敏摘要**，存下来是为了将来能回答
+    "这次分析是基于什么数据得出的" —— 模型给了个奇怪结论时，
+    没有这份 payload 就只能猜。
+    """
+
+    __tablename__ = "ai_analyses"
+    __table_args__ = (CheckConstraint("source IN ('online', 'offline')", name="source"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    report_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    #: online = 模型产出；offline = 离线规则回落
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="offline")
+    model: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    redacted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: 实际发送的聚合摘要（已按 redacted 处理）
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: 离线回落的原因：no_key / disabled / network / timeout / server / bad_response
+    fallback_reason: Mapped[str] = mapped_column(String(24), nullable=False, default="")
+    error: Mapped[str] = mapped_column(String(200), nullable=False, default="")
