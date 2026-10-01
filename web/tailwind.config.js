@@ -55,6 +55,18 @@ export default {
         yellow: 'rgb(var(--ab-yellow) / <alpha-value>)',
       },
 
+      // ---- 透明度：补齐本项目实际使用的档位 ----
+      // Tailwind 默认的 opacity 刻度是 0/5/10/20/25/…，而设计上需要更细的过渡
+      // （4% 的行悬停、8% 的图标按钮悬停、12% 的选中填充、14% 的图标底色、15% 的强调填充）。
+      // 不在此登记的话，`bg-hairline/8` 会在 @apply 时直接报"class does not exist"。
+      opacity: {
+        4: '0.04',
+        8: '0.08',
+        12: '0.12',
+        14: '0.14',
+        15: '0.15',
+      },
+
       // ---- 圆角：Apple 的连续圆角尺度（卡片 20 / 控件 10 / 弹层 28） ----
       borderRadius: {
         'ab-xs': '6px',

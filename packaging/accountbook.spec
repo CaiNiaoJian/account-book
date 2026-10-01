@@ -96,8 +96,20 @@ a = Analysis(
     [str(ENTRY)],
     pathex=[str(SRC)],
     binaries=[],
-    # 只读资源 → _MEIPASS/accountbook_resources（与 paths.py 的 frozen 分支一致）
-    datas=[(str(RESOURCES), 'accountbook_resources')],
+    # 两类数据必须显式打包：
+    #   1. 只读资源（图标/字体/前端产物）→ _MEIPASS/accountbook_resources，
+    #      与 paths.py 的 frozen 分支约定一致；
+    #   2. **Alembic 迁移脚本** → 保持与源码相同的包内相对路径。
+    #      它们不是被 import 的模块，PyInstaller 的依赖分析看不见它们；
+    #      漏掉的话，打包版启动时会报
+    #      "Path doesn't exist: .../db/migrations" —— 而源码运行一切正常，
+    #      属于只有真打包一次才会暴露的问题（已实际踩到）。
+    #      注意 versions/ 里的迁移文件也必须是**数据**：
+    #      将来新增迁移时无需改这里（整个目录一起打包）。
+    datas=[
+        (str(RESOURCES), 'accountbook_resources'),
+        (str(SRC / 'accountbook' / 'db' / 'migrations'), 'accountbook/db/migrations'),
+    ],
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},

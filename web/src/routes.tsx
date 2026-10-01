@@ -5,10 +5,10 @@
  *   "侧边栏里有这一项，点进去 404" 或 "路由存在但用户找不到入口"。
  *
  * 分派规则：
- *   * 阶段为 P0 的模块 → 真实页面组件；
+ *   * 已在对应阶段实现的模块 → 真实页面组件；
  *   * 其余模块 → 统一占位页（自动带模块名、阶段与规划说明）。
- * 当某个模块在后续阶段完成时，只需在此把它的 id 从 `PLACEHOLDER_ROUTES`
- * 移到 `IMPLEMENTED_ROUTES`，导航与徽标会自动同步。
+ * 当某个模块完成时，只需在此登记它的路径，
+ * 导航徽标由 `IMPLEMENTED_PHASES` 自动同步 —— 不要再手工改徽标。
  */
 
 import type { ReactNode } from 'react'
@@ -20,16 +20,31 @@ import { AppShell } from '@/app/AppShell'
 import { ALL_NAV_ITEMS } from '@/app/navigation'
 import { useI18n } from '@/i18n'
 import { AboutPage } from '@/pages/About'
+import { AccountsPage } from '@/pages/Accounts'
+import { CategoriesPage } from '@/pages/Categories'
 import { DashboardPage } from '@/pages/Dashboard'
 import { PlaceholderPage } from '@/pages/Placeholder'
 import { SettingsPage } from '@/pages/Settings'
+import { TransactionsPage } from '@/pages/Transactions'
 
-/** P0 已实现的页面（其余一律走占位页） */
+/** 已实现的页面（其余一律走占位页） */
 const IMPLEMENTED_ROUTES: Record<string, ReactNode> = {
   '/': <DashboardPage />,
+  '/transactions': <TransactionsPage />,
+  '/quick-add': <TransactionsPage />,
+  '/accounts': <AccountsPage />,
+  '/categories': <CategoriesPage />,
   '/settings': <SettingsPage />,
   '/about': <AboutPage />,
 }
+
+/**
+ * 已完成的阶段。
+ *
+ * 导航徽标据此判断"这一项能不能点" —— 徽标与页面实现共用同一份事实，
+ * 因此不可能出现"标着已实现、点进去是占位页"。
+ */
+export const IMPLEMENTED_PHASES = new Set(['P0', 'P1'])
 
 /** 404 页面：保持与占位页一致的视觉语言 */
 function NotFoundPage() {

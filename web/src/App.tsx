@@ -4,11 +4,13 @@
  * Provider 嵌套顺序是有讲究的：
  *   PreferencesProvider  最外层，因为语言来自偏好；
  *     └ I18nProvider     需要 preferences.language；
- *         └ Router       页面需要 i18n 提供的标题与文案。
+ *         └ LedgerProvider  需要 api（令牌已在 boot 阶段就绪），且错误提示要能本地化；
+ *             └ Router      页面需要 i18n 与账本数据。
  *
- * 刻意**不**引入任何状态管理库：P0 的全局状态只有"用户偏好"一项，
- * 一个 Context 足够；过早引入 Redux/Zustand 只会增加理解成本。
- * P1 出现跨页面的账目缓存需求时再评估。
+ * 仍然**不**引入状态管理库：全局状态只有两项 —— 用户偏好与账本字典
+ * （账户 / 分类 / 枚举 / 币种）。两者都是"读多写少、变更后整体刷新"的形态，
+ * Context 完全够用；引入 Redux/Zustand 只会增加理解成本。
+ * 流水列表**刻意不放进全局**：它是分页且带筛选的页面级状态。
  */
 
 import { RouterProvider, createBrowserRouter } from 'react-router-dom'
@@ -16,6 +18,7 @@ import { RouterProvider, createBrowserRouter } from 'react-router-dom'
 import { PreferencesProvider } from '@/app/preferences'
 import { I18nProvider } from '@/i18n'
 import { usePreferences } from '@/app/preferences'
+import { LedgerProvider } from '@/features/ledger/store'
 import { routes } from './routes'
 
 const router = createBrowserRouter(routes)
@@ -25,7 +28,9 @@ function LocalizedApp() {
   const { preferences } = usePreferences()
   return (
     <I18nProvider language={preferences.language}>
-      <RouterProvider router={router} />
+      <LedgerProvider>
+        <RouterProvider router={router} />
+      </LedgerProvider>
     </I18nProvider>
   )
 }

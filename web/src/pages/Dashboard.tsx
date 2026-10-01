@@ -1,44 +1,55 @@
 /**
- * 概览仪表盘（P0：基座骨架 + 真实运行状态）。
+ * 概览仪表盘（P1：真实账目数据）。
  *
- * P0 阶段这里**刻意不放假数据**。
- * 记账工具最忌讳的就是"看起来有数字，其实是编的" —— 一旦用户误信，
- * 后果比空白页严重得多。因此：
- *   * KPI 卡片显示 `—` 与「待录入」，说明数据接入在 P1；
- *   * 趋势图明确标注「示意图形」，并带可见水印；
- *   * 唯一显示真实内容的是「运行状态」卡片，它的数据来自后端接口，
- *     同时也是**本地服务链路的实时自证**（能显示出来就说明链路通了）。
+ * 与 P0 的区别
+ * ------------
+ * P0 刻意只显示占位与运行状态，因为当时没有任何账目数据 ——
+ * 记账工具最忌讳"看起来有数字、其实是编的"。
+ * P1 接入了真实数据，于是这一页回答用户最关心的四个问题：
+ *   1. 我现在有多少钱？（净值 / 资产 / 负债）
+ *   2. 这个月花了多少、比上月多还是少？（本月收支 + 环比）
+ *   3. 钱主要花在哪？（分类占比）
+ *   4. 最近记了什么？（最近流水）
+ *
+ * 口径说明：所有数字都来自 `/api/stats/dashboard`，**前端不做任何聚合**。
+ * 转账与余额校准已被后端排除在收支之外 —— 否则"工资卡转支付宝"
+ * 会让月支出凭空翻倍，这是记账软件最常见的口径错误。
  */
 
 import { motion } from 'framer-motion'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { Icon, type IconName } from '@/components/Icon'
-import { Sparkline } from '@/components/Sparkline'
-import { Card, EmptyState, PhaseBadge, Skeleton } from '@/components/ui'
+import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { staggerContainer, staggerItem } from '@/design/motion'
 import { useI18n } from '@/i18n'
-import { api } from '@/lib/api'
-import { boot } from '@/lib/boot'
-import { formatDuration } from '@/lib/format'
-import { useRuntimeInfo } from './useRuntimeInfo'
+import { api, type DashboardData } from '@/lib/api'
+import { compactMinor, displayMinor, formatDelta, formatTime, relativeDayLabel } from '@/lib/format'
+import { usePreferences } from '@/app/preferences'
+
+import { MoneyText } from '@/features/ledger/parts'
+import { useLedger } from '@/features/ledger/store'
 
 // -----------------------------------------------------------------------------
-// 子组件
+// KPI 卡片
 // -----------------------------------------------------------------------------
-interface MetricCardProps {
+interface MetricProps {
   label: string
   icon: IconName
   tone: 'accent' | 'positive' | 'negative' | 'purple'
-  pendingLabel: string
+  value: string
+  delta?: number | null
+  hint?: string
 }
 
 /**
- * KPI 卡片。P0 值为占位：显示 `—` 与「待录入」，
- * 保证用户不会把示意数据误当成真实账目。
+ * KPI 卡片。
+ *
+ * 环比为 `null` 时显示 `—` 而不是 0% 或 +100%：
+ * "上期是 0，这期是 500"在数学上没有变化率，编一个出来是骗人。
  */
-function MetricCard({ label, icon, tone, pendingLabel }: MetricCardProps) {
+function MetricCard({ label, icon, tone, value, delta, hint }: MetricProps) {
   return (
     <motion.div variants={staggerItem}>
       <Card dense className="h-full">
@@ -50,261 +61,395 @@ function MetricCard({ label, icon, tone, pendingLabel }: MetricCardProps) {
             <Icon name={icon} size={14} strokeWidth={1.9} />
           </span>
           <span className="truncate text-ab-footnote text-label-2">{label}</span>
+          {delta !== undefined ? (
+            <span
+              className={`ab-tnum ml-auto text-ab-caption font-semibold ${
+                delta === null
+                  ? 'text-label-3'
+                  : delta > 0
+                    ? 'text-negative'
+                    : delta < 0
+                      ? 'text-positive'
+                      : 'text-label-3'
+              }`}
+            >
+              {delta === null || delta === undefined ? '—' : formatDelta(delta)}
+            </span>
+          ) : null}
         </div>
-        <div className="mt-2.5 flex items-baseline gap-2">
-          <span className="ab-tnum text-ab-title1 font-semibold tracking-tight text-label-3">—</span>
-          <span className="ab-phase-badge">{pendingLabel}</span>
-        </div>
+        <div className="ab-metric mt-2.5">{value}</div>
+        {hint ? <div className="mt-0.5 text-ab-caption1 text-label-3">{hint}</div> : null}
       </Card>
     </motion.div>
   )
 }
 
-interface StatusRowProps {
-  label: string
-  value: string
-  mono?: boolean
-  onReveal?: () => void
-}
-
-function StatusRow({ label, value, mono, onReveal }: StatusRowProps) {
-  return (
-    <div className="flex items-start justify-between gap-4 border-b border-separator/40 py-[7px] last:border-b-0">
-      <span className="shrink-0 text-ab-footnote text-label-2">{label}</span>
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span
-          className={[
-            'ab-selectable truncate text-right text-ab-footnote text-label',
-            mono ? 'ab-tnum font-mono text-ab-caption' : '',
-          ]
-            .filter(Boolean)
-            .join(' ')}
-          title={value}
-        >
-          {value}
-        </span>
-        {onReveal ? (
-          <button
-            type="button"
-            onClick={onReveal}
-            className="shrink-0 text-label-3 transition-colors hover:text-accent"
-            aria-label="reveal"
-          >
-            <Icon name="externalLink" size={13} />
-          </button>
-        ) : null}
-      </span>
-    </div>
-  )
-}
-
-// -----------------------------------------------------------------------------
-// 页面
-// -----------------------------------------------------------------------------
 export function DashboardPage() {
   const { t } = useI18n()
-  const { state, reload } = useRuntimeInfo()
-  const [revealError, setRevealError] = useState<string | null>(null)
+  const { preferences } = usePreferences()
+  const { accounts, categoryById, refresh: refreshLedger } = useLedger()
+  const [data, setData] = useState<DashboardData | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const hour = new Date().getHours()
-  const greeting =
-    hour < 12 ? t('dashboard.greetingMorning') : hour < 18 ? t('dashboard.greetingAfternoon') : t('dashboard.greetingEvening')
+  const load = useCallback(async () => {
+    try {
+      setData(await api.dashboard({ trend_days: 30, recent_limit: 8 }))
+      setError(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
-  const handleReveal = useCallback(() => {
-    setRevealError(null)
-    api
-      .revealDataDir()
-      .then((result) => {
-        if (result.status !== 'ok') setRevealError(result.detail ?? t('common.unknown'))
-      })
-      .catch((error: unknown) => setRevealError(error instanceof Error ? error.message : String(error)))
-  }, [t])
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[0, 1, 2, 3].map((key) => (
+            <Skeleton key={key} className="h-24 w-full" />
+          ))}
+        </div>
+        <Skeleton className="h-48 w-full" />
+      </div>
+    )
+  }
+
+  if (error || !data) {
+    return (
+      <Card flush>
+        <EmptyState
+          icon="alert"
+          title={t('dashboard.loadFailedTitle')}
+          body={error ?? t('common.unknown')}
+          action={
+            <button type="button" className="ab-btn-primary" onClick={() => void load()}>
+              <Icon name="refresh" size={14} />
+              {t('common.retry')}
+            </button>
+          }
+        />
+      </Card>
+    )
+  }
+
+  const hasData = data.month.transaction_count > 0 || data.net_worth.account_count > 0
+  const maxExpense = Math.max(1, ...data.month.top_categories.map((item) => item.amount_minor))
+  const trendMax = Math.max(1, ...data.trend.map((item) => Math.max(item.income_minor, item.expense_minor)))
 
   return (
-    <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-5">
-      {/* ---- 欢迎语 ------------------------------------------------------- */}
-      <motion.header variants={staggerItem}>
-        <div className="flex flex-wrap items-baseline gap-2.5">
-          <h2 className="text-ab-title1 text-label">{greeting}</h2>
-          <PhaseBadge phase={boot.phase} />
-        </div>
-        <p className="mt-1 max-w-2xl text-ab-callout text-label-2">{t('dashboard.subtitle')}</p>
-      </motion.header>
+    <div className="space-y-4">
+      {/* KPI 行 */}
+      <motion.div
+        variants={staggerContainer}
+        initial="hidden"
+        animate="show"
+        className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+      >
+        <MetricCard
+          label={t('ledger.netWorth')}
+          icon="accounts"
+          tone="accent"
+          value={displayMinor(data.net_worth.net_worth_minor, 'CNY', preferences.privacy_mode)}
+          hint={t('dashboard.assetsHint', {
+            assets: compactMinor(data.net_worth.assets_minor),
+            liabilities: compactMinor(data.net_worth.liabilities_minor),
+          })}
+        />
+        <MetricCard
+          label={t('dashboard.monthExpense')}
+          icon="transactions"
+          tone="negative"
+          value={displayMinor(data.month.expense_minor, 'CNY', preferences.privacy_mode)}
+          delta={data.month.expense_change}
+          hint={t('dashboard.monthRecords', { count: data.month.transaction_count })}
+        />
+        <MetricCard
+          label={t('dashboard.monthIncome')}
+          icon="salary"
+          tone="positive"
+          value={displayMinor(data.month.income_minor, 'CNY', preferences.privacy_mode)}
+          delta={data.month.income_change}
+        />
+        <MetricCard
+          label={t('dashboard.monthBalance')}
+          icon="budgets"
+          tone="purple"
+          value={displayMinor(data.month.net_minor, 'CNY', preferences.privacy_mode)}
+        />
+      </motion.div>
 
-      {/* ---- KPI 卡片 ----------------------------------------------------- */}
-      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label={t('dashboard.netWorth')} icon="accounts" tone="accent" pendingLabel={t('dashboard.awaitingData')} />
-        <MetricCard label={t('dashboard.monthIncome')} icon="download" tone="positive" pendingLabel={t('dashboard.awaitingData')} />
-        <MetricCard label={t('dashboard.monthExpense')} icon="upload" tone="negative" pendingLabel={t('dashboard.awaitingData')} />
-        <MetricCard label={t('dashboard.monthBalance')} icon="statistics" tone="purple" pendingLabel={t('dashboard.awaitingData')} />
-      </div>
-
-      {/* ---- 趋势（示意）+ 运行状态 --------------------------------------- */}
-      <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-3">
-        <motion.div variants={staggerItem} className="lg:col-span-2">
-          <Card
-            title={t('dashboard.trendTitle')}
-            subtitle={t('dashboard.placeholderNote', { phase: 'P2' })}
-            className="h-full"
-          >
-            {/* 明确的"示意"水印：避免任何误读为真实账目的可能 */}
-            <div className="relative">
-              <div className="relative overflow-hidden rounded-ab-md bg-surface-2/70 p-3">
-                <span className="pointer-events-none absolute right-3 top-2 select-none text-ab-caption font-semibold uppercase tracking-widest text-label-3/70">
-                  DEMO
-                </span>
-                <Sparkline
-                  points={[18, 22, 19, 27, 24, 31, 29, 36, 33, 41, 38, 46, 44, 52, 49, 58]}
-                  tone="accent"
-                  width={880}
-                  height={132}
-                  className="h-[132px] w-full"
-                  title={t('dashboard.trendTitle')}
-                />
-                <div className="mt-1 flex justify-between text-ab-caption2 text-label-3">
-                  {['—', '—', '—', '—', '—', '—'].map((label, index) => (
-                    <span key={index}>{label}</span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </Card>
-        </motion.div>
-
-        <motion.div variants={staggerItem}>
-          <Card
-            title={t('dashboard.systemTitle')}
-            subtitle={
-              state.status === 'ready'
-                ? t('dashboard.systemConnected')
-                : state.status === 'error'
-                  ? t('dashboard.systemDisconnected')
-                  : t('common.loading')
-            }
-            action={
-              <button
-                type="button"
-                onClick={reload}
-                className="ab-btn-ghost"
-                aria-label={t('common.retry')}
-                title={t('common.retry')}
-              >
-                <Icon name="refresh" size={14} />
-              </button>
-            }
-            className="h-full"
-          >
-            {state.status === 'loading' ? (
-              <div className="space-y-2">
-                {[0, 1, 2, 3, 4].map((index) => (
-                  <Skeleton key={index} className="h-6 w-full" />
-                ))}
-              </div>
-            ) : state.status === 'error' ? (
-              <EmptyState
-                icon="alert"
-                title={t('dashboard.systemDisconnected')}
-                body={state.message}
-                action={
-                  <button type="button" className="ab-btn-secondary" onClick={reload}>
-                    {t('common.retry')}
-                  </button>
-                }
-              />
-            ) : (
-              <div>
-                <StatusRow label={t('dashboard.fieldVersion')} value={`${state.info.version} · ${state.info.phase}`} />
-                <StatusRow label={t('dashboard.fieldPython')} value={state.info.python_version} />
-                <StatusRow label={t('dashboard.fieldPlatform')} value={state.info.platform} />
-                <StatusRow label={t('dashboard.fieldUptime')} value={formatDuration(state.info.uptime_seconds)} />
-                <StatusRow label={t('dashboard.fieldPort')} value={String(state.info.port)} mono />
-                <StatusRow
-                  label={t('dashboard.fieldShell')}
-                  value={
-                    state.info.shell === 'pywebview'
-                      ? t('dashboard.shellNative')
-                      : t('dashboard.shellBrowser')
-                  }
-                />
-                <StatusRow
-                  label={t('dashboard.fieldMode')}
-                  value={state.info.paths.portable ? t('dashboard.modePortable') : t('dashboard.modeInstalled')}
-                />
-                <StatusRow
-                  label={t('dashboard.fieldDataDir')}
-                  value={state.info.paths.data_dir}
-                  mono
-                  onReveal={handleReveal}
-                />
-                <StatusRow label={t('dashboard.fieldLogFile')} value={state.info.paths.log_file} mono />
-
-                {/* 数据目录未能使用首选位置时，必须让用户看见"放在了哪里、为什么"。
-                    默默换个地方存账本会让人以为数据丢了。 */}
-                {state.info.paths.degraded ? (
-                  <div className="mt-2.5 rounded-ab-sm bg-warning/12 p-2 text-ab-caption text-label">
-                    <p className="flex items-start gap-1.5">
-                      <Icon name="alert" size={13} className="mt-[1px] shrink-0 text-warning" />
-                      {t('dashboard.degradedWarning')}
-                    </p>
-                    <p className="mt-1.5 pl-5 text-ab-caption2 text-label-2">
-                      {t('dashboard.fieldDataDirSource')}：{state.info.paths.data_dir_source || '—'}
-                    </p>
-                    {state.info.paths.data_dir_attempts.length > 0 ? (
-                      <details className="mt-1 pl-5">
-                        <summary className="cursor-pointer text-ab-caption2 text-label-2">
-                          {t('dashboard.degradedAttempts')}（{state.info.paths.data_dir_attempts.length}）
-                        </summary>
-                        <ul className="ab-selectable mt-1 space-y-0.5 font-mono text-ab-caption2 text-label-3">
-                          {state.info.paths.data_dir_attempts.map((attempt) => (
-                            <li key={attempt} className="break-all">
-                              · {attempt}
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {state.info.shell === 'browser' ? (
-                  <p className="mt-2.5 flex items-start gap-1.5 rounded-ab-sm bg-warning/12 p-2 text-ab-caption text-label">
-                    <Icon name="alert" size={13} className="mt-[1px] shrink-0 text-warning" />
-                    {t('dashboard.browserFallbackWarning')}
-                  </p>
-                ) : null}
-                {state.info.is_admin ? (
-                  <p className="mt-2.5 flex items-start gap-1.5 rounded-ab-sm bg-warning/12 p-2 text-ab-caption text-label">
-                    <Icon name="alert" size={13} className="mt-[1px] shrink-0 text-warning" />
-                    {t('dashboard.adminWarning')}
-                  </p>
-                ) : null}
-                {revealError ? (
-                  <p className="mt-2.5 text-ab-caption text-negative">
-                    {t('dashboard.revealFailed', { message: revealError })}
-                  </p>
-                ) : null}
-              </div>
-            )}
-          </Card>
-        </motion.div>
-      </div>
-
-      {/* ---- 空状态 ------------------------------------------------------- */}
-      <motion.div variants={staggerItem}>
+      {!hasData ? (
         <Card flush>
           <EmptyState
-            icon="ledger"
+            icon="quickAdd"
             title={t('dashboard.emptyTitle')}
             body={t('dashboard.emptyBody')}
             action={
-              <Link to="/about" className="ab-btn-primary">
-                <Icon name="about" size={14} />
-                {t('dashboard.emptyAction')}
+              <Link to="/transactions" className="ab-btn-primary">
+                <Icon name="plus" size={14} />
+                {t('ledger.quickAdd')}
               </Link>
             }
           />
         </Card>
-      </motion.div>
-    </motion.div>
+      ) : null}
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        {/* 近 30 天趋势 */}
+        <Card className="xl:col-span-2" title={t('dashboard.trendTitle')}>
+          <div className="flex items-center gap-3 text-ab-caption text-label-3">
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-negative" />
+              {t('transactionType.expense')}
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-positive" />
+              {t('transactionType.income')}
+            </span>
+            <span className="ml-auto">{t('dashboard.trendHint')}</span>
+          </div>
+          {/* 用 CSS 柱状图而不是图表库：P2 才引入 ECharts，
+              在这之前用一个不引依赖、且能真实反映数据的画法更诚实 */}
+          <div className="mt-3 flex h-40 items-end gap-[3px]">
+            {data.trend.map((day) => {
+              const expenseHeight = (day.expense_minor / trendMax) * 100
+              const incomeHeight = (day.income_minor / trendMax) * 100
+              return (
+                <div
+                  key={day.date}
+                  className="group relative flex h-full flex-1 flex-col justify-end gap-[1px]"
+                  title={`${day.date}：${t('transactionType.expense')} ${displayMinor(day.expense_minor, 'CNY')}，${t('transactionType.income')} ${displayMinor(day.income_minor, 'CNY')}`}
+                >
+                  {day.income_minor > 0 ? (
+                    <div className="w-full rounded-t-[2px] bg-positive/70" style={{ height: `${incomeHeight}%` }} />
+                  ) : null}
+                  {day.expense_minor > 0 ? (
+                    <div className="w-full rounded-t-[2px] bg-negative/70" style={{ height: `${expenseHeight}%` }} />
+                  ) : null}
+                  {/* 未记账的日子留一条极淡的底线，表示"这天没有数据"而不是"这天是 0" */}
+                  {day.transaction_count === 0 ? (
+                    <div className="h-[2px] w-full rounded-full bg-hairline/15" />
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+          <div className="mt-1.5 flex justify-between text-ab-caption2 text-label-3">
+            <span>{data.trend[0]?.date.slice(5)}</span>
+            <span>{data.trend[data.trend.length - 1]?.date.slice(5)}</span>
+          </div>
+        </Card>
+
+        {/* 分类占比 */}
+        <Card title={t('dashboard.topCategories')}>
+          {data.month.top_categories.length === 0 ? (
+            <p className="py-6 text-center text-ab-footnote text-label-3">{t('dashboard.noCategoryData')}</p>
+          ) : (
+            <div className="space-y-2.5">
+              {data.month.top_categories.map((item) => {
+                const category = categoryById(item.category_id)
+                return (
+                  <div key={`${item.category_id ?? 'none'}`}>
+                    <div className="flex items-center gap-2">
+                      <Icon
+                        name={category?.icon ?? 'other'}
+                        size={13}
+                        className="shrink-0"
+                        // 图标颜色跟随分类色，与流水列表保持一致
+                        {...(category ? { style: { color: `rgb(var(--ab-${category.color}))` } } : {})}
+                      />
+                      <span className="flex-1 truncate text-ab-footnote text-label-2">
+                        {item.category_name}
+                      </span>
+                      <span className="ab-tnum text-ab-footnote font-semibold text-label">
+                        {displayMinor(item.amount_minor, 'CNY', preferences.privacy_mode)}
+                      </span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-hairline/10">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${(item.amount_minor / maxExpense) * 100}%`,
+                          backgroundColor: `rgb(var(--ab-${category?.color ?? 'accent'}))`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        {/* 最近流水 */}
+        <Card
+          className="xl:col-span-2"
+          title={t('dashboard.recentTitle')}
+          action={
+            <Link to="/transactions" className="ab-btn-ghost text-ab-footnote">
+              {t('dashboard.viewAll')}
+              <Icon name="chevronRight" size={13} />
+            </Link>
+          }
+          flush
+        >
+          {data.recent_transactions.length === 0 ? (
+            <p className="px-3 py-6 text-center text-ab-footnote text-label-3">
+              {t('dashboard.noRecent')}
+            </p>
+          ) : (
+            data.recent_transactions.map((item) => (
+              <div key={item.id} className="ab-row">
+                <span
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px]"
+                  style={{
+                    backgroundColor: `rgb(var(--ab-${item.category_color || 'separator'}) / 0.14)`,
+                    color: `rgb(var(--ab-${item.category_color || 'separator'}))`,
+                  }}
+                >
+                  <Icon name={item.category_icon || 'other'} size={15} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-ab-subhead font-medium text-label">
+                    {item.category_name || item.payee || t('ledger.uncategorized')}
+                  </div>
+                  <div className="truncate text-ab-caption text-label-3">
+                    {[relativeDayLabel(item.occurred_at), formatTime(item.occurred_at), item.account_name]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </div>
+                </div>
+                <MoneyText
+                  minor={
+                    item.type === 'expense'
+                      ? -item.amount_minor
+                      : item.type === 'income'
+                        ? item.amount_minor
+                        : item.amount_minor
+                  }
+                  currency={item.currency}
+                  tone={item.type === 'income' ? 'income' : item.type === 'expense' ? 'expense' : 'neutral'}
+                />
+              </div>
+            ))
+          )}
+        </Card>
+
+        {/* 账户快照 */}
+        <Card
+          title={t('dashboard.accountsTitle')}
+          action={
+            <Link to="/accounts" className="ab-btn-ghost text-ab-footnote">
+              {t('dashboard.manage')}
+              <Icon name="chevronRight" size={13} />
+            </Link>
+          }
+          flush
+        >
+          {accounts.length === 0 ? (
+            <p className="px-3 py-6 text-center text-ab-footnote text-label-3">
+              {t('ledger.noAccountsTitle')}
+            </p>
+          ) : (
+            accounts.slice(0, 6).map((account) => (
+              <div key={account.id} className="ab-row">
+                <span
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px]"
+                  style={{
+                    backgroundColor: `rgb(var(--ab-${account.color}) / 0.14)`,
+                    color: `rgb(var(--ab-${account.color}))`,
+                  }}
+                >
+                  <Icon name={account.icon} size={15} />
+                </span>
+                <span className="flex-1 truncate text-ab-subhead text-label">{account.name}</span>
+                <span
+                  className={`ab-tnum text-ab-footnote font-semibold ${
+                    account.balance_minor < 0 ? 'text-negative' : 'text-label'
+                  }`}
+                >
+                  {displayMinor(account.balance_minor, account.currency, preferences.privacy_mode)}
+                </span>
+              </div>
+            ))
+          )}
+        </Card>
+      </div>
+
+      <RunStatusCard onReload={() => void Promise.all([load(), refreshLedger()])} />
+    </div>
+  )
+}
+
+/**
+ * 运行状态卡片。
+ *
+ * 它同时是**本地服务链路的实时自证**：能显示出来就说明
+ * 令牌 → 环回请求 → 后端 → SQLite 整条链路当时是通的。
+ * 出问题时这是最省事的排查入口，因此保留在首页。
+ */
+function RunStatusCard({ onReload }: { onReload: () => void }) {
+  const { t } = useI18n()
+  const [info, setInfo] = useState<Awaited<ReturnType<typeof api.runtimeInfo>> | null>(null)
+  const [integrity, setIntegrity] = useState<Awaited<ReturnType<typeof api.integrity>> | null>(null)
+
+  useEffect(() => {
+    void api.runtimeInfo().then(setInfo).catch(() => setInfo(null))
+    void api.integrity().then(setIntegrity).catch(() => setIntegrity(null))
+  }, [])
+
+  const rows: { label: string; value: string }[] = info
+    ? [
+        { label: t('dashboard.fieldShell'), value: info.shell },
+        { label: t('dashboard.fieldDataDir'), value: info.paths.data_dir },
+        { label: t('dashboard.fieldDatabase'), value: info.paths.database },
+      ]
+    : []
+
+  return (
+    <Card
+      title={t('dashboard.systemTitle')}
+      action={
+        <button type="button" className="ab-btn-ghost" onClick={onReload} aria-label={t('common.retry')}>
+          <Icon name="refresh" size={14} />
+        </button>
+      }
+    >
+      {rows.length === 0 ? (
+        <p className="text-ab-footnote text-label-3">{t('common.unknown')}</p>
+      ) : (
+        <div className="space-y-1.5">
+          {rows.map((row) => (
+            <div key={row.label} className="flex items-baseline gap-3">
+              <span className="w-24 shrink-0 text-ab-caption text-label-3">{row.label}</span>
+              <span className="truncate font-mono text-ab-caption text-label-2" title={row.value}>
+                {row.value}
+              </span>
+            </div>
+          ))}
+          {integrity ? (
+            <div className="flex items-center gap-2 pt-1">
+              <span className={`h-1.5 w-1.5 rounded-full ${integrity.ok ? 'bg-positive' : 'bg-warning'}`} />
+              <span className="text-ab-caption text-label-2">
+                {integrity.ok
+                  ? t('dashboard.integrityOk', {
+                      transactions: integrity.stats.transactions,
+                      categories: integrity.stats.categories,
+                    })
+                  : t('dashboard.integrityIssues', { count: integrity.issues.length })}
+              </span>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </Card>
   )
 }

@@ -15,8 +15,13 @@ const MINOR_UNITS: Record<string, number> = {
   EUR: 2,
   GBP: 2,
   HKD: 2,
+  TWD: 2,
+  SGD: 2,
+  AUD: 2,
+  CAD: 2,
   JPY: 0,
   KRW: 0,
+  VND: 0,
 }
 
 const CURRENCY_SYMBOLS: Record<string, string> = {
@@ -25,12 +30,39 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   EUR: '€',
   GBP: '£',
   HKD: 'HK$',
+  TWD: 'NT$',
+  SGD: 'S$',
+  AUD: 'A$',
+  CAD: 'C$',
   JPY: '¥',
   KRW: '₩',
+  VND: '₫',
+}
+
+/**
+ * 用后端下发的币种字典覆盖内置表。
+ *
+ * 为什么以**后端为准**：最小单位位数是金额正确性的前提（日元 0 位、
+ * 第纳尔 3 位）。若前端维护第二份，新币种上线时两边一旦不一致，
+ * 所有金额都会差整数量级，而且很难看出是前端的错。
+ * 内置表只作为"接口尚未返回时的兜底"。
+ */
+export function registerCurrencies(
+  items: ReadonlyArray<{ code: string; symbol?: string; minor_units?: number }>,
+): void {
+  for (const item of items) {
+    if (typeof item.minor_units === 'number') MINOR_UNITS[item.code] = item.minor_units
+    if (item.symbol) CURRENCY_SYMBOLS[item.code] = item.symbol
+  }
 }
 
 export function currencySymbol(currency = 'CNY'): string {
   return CURRENCY_SYMBOLS[currency] ?? currency
+}
+
+/** 币种的最小单位位数（供输入解析使用） */
+export function minorUnits(currency = 'CNY'): number {
+  return MINOR_UNITS[currency] ?? 2
 }
 
 /**
@@ -130,4 +162,98 @@ export function formatDuration(seconds: number): string {
   if (hours > 0) return `${hours}小时${minutes}分`
   if (minutes > 0) return `${minutes}分${secs}秒`
   return `${secs}秒`
+}
+
+// -----------------------------------------------------------------------------
+// 日期（记账场景）
+// -----------------------------------------------------------------------------
+
+/**
+ * 本地日期键（YYYY-MM-DD）。
+ *
+ * **不要用 `toISOString()`** —— 它会转成 UTC，在东八区会把当天 08:00
+ * 之前的记录算到前一天，日历与时间轴会因此整体错位一天。
+ */
+export function localDayKey(value: Date | string = new Date()): string {
+  const date = typeof value === 'string' ? new Date(value) : value
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+/** 时间（HH:mm） */
+export function formatTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/** 日期（M月D日，省略年份；跨年时补上年份） */
+export function formatDayLabel(iso: string, today = new Date()): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  const sameYear = date.getFullYear() === today.getFullYear()
+  const base = `${date.getMonth() + 1}月${date.getDate()}日`
+  return sameYear ? base : `${date.getFullYear()}年${base}`
+}
+
+/** 星期几（中文单字，用于时间轴与日历表头） */
+export function weekdayShort(value: Date | string): string {
+  const date = typeof value === 'string' ? new Date(value) : value
+  return ['日', '一', '二', '三', '四', '五', '六'][date.getDay()] ?? ''
+}
+
+/** 相对日：今天 / 昨天 / 明天 / 具体日期 */
+export function relativeDayLabel(iso: string, today = new Date()): string {
+  const key = localDayKey(iso)
+  if (!key) return '—'
+  const todayKey = localDayKey(today)
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+
+  if (key === todayKey) return '今天'
+  if (key === localDayKey(yesterday)) return '昨天'
+  if (key === localDayKey(tomorrow)) return '明天'
+  return formatDayLabel(iso, today)
+}
+
+/**
+ * 把「元」文本解析为整数最小单位（分）。非法输入返回 `null`。
+ *
+ * 容错范围与后端 `core/money.py` 的 `parse_amount` 保持一致：
+ * 允许币种符号、千分位、全角数字、中文"元"、前后空格。
+ * 快捷记账场景下用户会直接粘贴 `¥1,234.56` 或 `1234.5元`，
+ * 为此报错会毁掉"快速"二字。
+ */
+export function parseAmountToMinor(text: string, currency = 'CNY'): number | null {
+  if (typeof text !== 'string') return null
+  let cleaned = text.trim()
+  for (const noise of ['¥', '￥', '$', '€', '£', '元', '人民币', 'RMB', 'rmb', ' ', '\u3000']) {
+    cleaned = cleaned.split(noise).join('')
+  }
+  cleaned = cleaned.split(',').join('').split('，').join('')
+  cleaned = cleaned.replace(/[０-９．－]/g, (ch) => {
+    const map: Record<string, string> = {
+      '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
+      '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+      '．': '.', '－': '-',
+    }
+    return map[ch] ?? ch
+  })
+  if (!/^-?\d*(\.\d*)?$/.test(cleaned) || cleaned === '' || cleaned === '-' || cleaned === '.') return null
+
+  const digits = minorUnits(currency)
+  const negative = cleaned.startsWith('-')
+  const body = negative ? cleaned.slice(1) : cleaned
+  const [wholePart = '0', fractionPart = ''] = body.split('.')
+  // 超出币种精度时四舍五入（与后端 ROUND_HALF_UP 一致）
+  const padded = (fractionPart + '0'.repeat(digits + 1)).slice(0, digits + 1)
+  const kept = padded.slice(0, digits)
+  const nextDigit = Number(padded.charAt(digits) || '0')
+  let minor = Number(wholePart || '0') * 10 ** digits + Number(kept || '0')
+  if (nextDigit >= 5) minor += 1
+  return negative ? -minor : minor
 }

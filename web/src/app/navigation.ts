@@ -32,8 +32,17 @@ export interface NavGroup {
   items: NavItem[]
 }
 
-/** 已在本阶段（P0）真正可用的模块 */
-export const IMPLEMENTED_PHASE = 'P0'
+/**
+ * 已完成的阶段集合。
+ *
+ * 徽标与"能不能点"由**同一份事实**决定：侧边栏据此隐藏阶段角标，
+ * 路由表（`routes.tsx` 的 `IMPLEMENTED_ROUTES`）据实挂载真实页面。
+ * 两处若各写一份，就必然出现"标着已实现、点进去是占位页"。
+ */
+export const IMPLEMENTED_PHASES = new Set(['P0', 'P1'])
+
+/** 兼容旧引用：当前最新完成阶段 */
+export const IMPLEMENTED_PHASE = 'P1'
 
 export const NAV_GROUPS: NavGroup[] = [
   {
@@ -90,7 +99,7 @@ export function findNavItemByPath(path: string): NavItem | undefined {
   return ALL_NAV_ITEMS.find((item) => item.path === path)
 }
 
-/** 判断模块是否已在本阶段可用 */
+/** 判断模块是否已完成（阶段已在 IMPLEMENTED_PHASES 中） */
 export function isImplemented(item: NavItem): boolean {
-  return item.phase === IMPLEMENTED_PHASE
+  return IMPLEMENTED_PHASES.has(item.phase)
 }

@@ -85,4 +85,74 @@
     @apply rounded-full bg-hairline/5 px-1.5 py-[1px] text-ab-caption2 font-semibold
            uppercase tracking-wide text-label-3;
   }
+
+  /* ===========================================================================
+   * P1 记账界面新增：表单与列表原语
+   *
+   * 这些类存在的唯一理由是**消除重复的输入框样式**。之前每个页面各写一遍
+   * 边框/圆角/焦点环，结果是"看起来差不多但仔细看不一样" —— 这类不一致
+   * 是界面显得廉价的主要原因之一。收敛到一处后，改一次即全局生效。
+   * ======================================================================== */
+
+  /* 图标按钮：正方形、无填充，悬停给极淡底色 */
+  .ab-icon-btn {
+    @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-ab-sm text-label-2
+           transition-colors duration-ab1 ease-ab-standard hover:bg-hairline/8 hover:text-label
+           active:scale-[0.94] disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  /* 文本输入：与金额框、下拉框共用同一套边框与焦点表现 */
+  .ab-input {
+    @apply w-full rounded-ab-sm border border-separator bg-surface px-2.5 py-[7px] text-ab-subhead
+           text-label outline-none transition-colors duration-ab1 ease-ab-standard
+           placeholder:text-label-3 focus:border-accent disabled:opacity-50;
+  }
+
+  /* 多行输入 */
+  .ab-textarea {
+    @apply ab-input resize-none leading-relaxed;
+  }
+
+  /* 下拉选择：原生控件 + 自绘外观（保留键盘与读屏支持） */
+  .ab-select {
+    @apply ab-input cursor-pointer appearance-none bg-no-repeat pr-7;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: right 14px center, right 9px center;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+  }
+
+  /* 药丸标签：筛选条件、标签展示 */
+  .ab-chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-separator/70 px-2.5 py-[3px]
+           text-ab-footnote font-medium text-label-2 transition-all duration-ab1 ease-ab-standard
+           hover:border-separator hover:text-label;
+  }
+  .ab-chip[data-active='true'] {
+    @apply border-accent bg-accent/12 text-accent;
+  }
+
+  /* 表单字段标签 */
+  .ab-field-label {
+    @apply mb-1.5 block text-ab-footnote font-medium text-label-2;
+  }
+
+  /* 列表行：统一的悬停与分隔线 */
+  .ab-row {
+    @apply flex items-center gap-3 border-b border-separator/40 px-3 py-2.5 transition-colors
+           duration-ab1 ease-ab-standard last:border-b-0 hover:bg-hairline/4;
+  }
+
+  /* 分段控件（视图切换）的容器 */
+  .ab-segment {
+    @apply inline-flex items-center gap-0.5 rounded-ab-sm bg-surface-3/70 p-0.5;
+  }
+  .ab-segment > button {
+    @apply rounded-[7px] px-2.5 py-1 text-ab-footnote font-medium text-label-2 transition-all
+           duration-ab1 ease-ab-standard hover:text-label;
+  }
+  .ab-segment > button[data-active='true'] {
+    @apply bg-surface text-label shadow-ab-1;
+  }
 }
