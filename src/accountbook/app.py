@@ -347,25 +347,36 @@ def _emit(text: str) -> None:
 def _report_data_dir_unusable(paths: AppPaths, exc: OSError) -> None:
     """数据目录不可用时的用户可读提示（启动前致命错误）。
 
+    只有在**所有候选位置都确认不可写**时才会走到这里（见 paths.get_paths）。
+    因此这条消息的重点不是"某个目录不行"，而是"我把能试的地方都试了，
+    这是完整的尝试记录" —— 用户拿着它就能判断问题出在哪一层。
+
     常见原因与就地给出的解决办法：
         * 程序被放在 ``C:\\Program Files`` 且当前用户无写权限
-          → 改用安装版（数据会落在 %LOCALAPPDATA%）或以管理员身份运行一次；
+          → 用 ``--data-dir`` 指定一个可写目录，或以管理员身份运行一次；
         * 便携版被放在只读介质（光盘、只读 U 盘）
-          → 复制到可写目录，或用 ``--data-dir`` 指定位置；
-        * 磁盘已满 / 被安全软件拦截
+          → 复制到可写目录；
+        * 磁盘已满 / 被安全软件或组策略拦截
           → 清理空间或调整安全软件规则。
 
     这里刻意**不打印堆栈**：用户看不懂，而支持人员可以从 ``--print-paths`` 拿到同样信息。
     """
+    attempts_block = ""
+    if paths.data_dir_attempts:
+        lines = "\n".join(f"    · {item}" for item in paths.data_dir_attempts)
+        attempts_block = f"\n已尝试的位置（全部不可写）：\n{lines}\n"
+
     message = (
         f"无法创建或写入数据目录，程序已停止启动。\n\n"
-        f"数据目录：{paths.data}\n"
+        f"最后尝试的位置：{paths.data}\n"
+        f"位置来源：{paths.data_dir_source or '默认'}\n"
         f"运行模式：{'便携版' if paths.portable else '安装版'}\n"
-        f"错误信息：{exc}\n\n"
+        f"错误信息：{exc}\n"
+        f"{attempts_block}\n"
         "可以尝试：\n"
-        "  1) 把程序复制到你有写权限的目录（例如桌面或文档）；\n"
-        '  2) 用命令行指定数据位置：accountbook --data-dir "D:\\我的账本"\n'
-        "  3) 检查磁盘剩余空间与安全软件拦截记录。"
+        '  1) 用命令行指定一个你有写权限的位置：accountbook --data-dir "D:\\我的账本"\n'
+        "  2) 把程序复制到你有写权限的目录（例如桌面或文档）后重试；\n"
+        "  3) 检查磁盘剩余空间、安全软件拦截记录与组策略限制。"
     )
     _emit(message)
     _show_message_box(message, title=APP_NAME_EN)

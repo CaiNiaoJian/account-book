@@ -120,6 +120,10 @@ export const enUS = {
     fieldUptime: 'Uptime',
     fieldPort: 'Port',
     fieldDataDir: 'Data directory',
+    fieldDataDirSource: 'Location source',
+    degradedWarning:
+      'The preferred data folder is not writable, so your ledger is stored in the location below instead. Everything stays local and fully functional. To move back, fix the write permission and restart, or pass --data-dir.',
+    degradedAttempts: 'Skipped locations',
     fieldLogFile: 'Log file',
     fieldMode: 'Mode',
     fieldShell: 'Window shell',
@@ -132,7 +136,6 @@ export const enUS = {
     openDataDir: 'Open data folder',
     revealFailed: 'Could not open the data folder: {message}',
     adminWarning: 'Running as administrator. Prefer a normal user account to avoid file-permission surprises.',
-    degradedWarning: 'The portable folder was not writable, so the user data folder is used instead.',
   },
 
   phase: {

@@ -238,6 +238,34 @@ export function DashboardPage() {
                 />
                 <StatusRow label={t('dashboard.fieldLogFile')} value={state.info.paths.log_file} mono />
 
+                {/* 数据目录未能使用首选位置时，必须让用户看见"放在了哪里、为什么"。
+                    默默换个地方存账本会让人以为数据丢了。 */}
+                {state.info.paths.degraded ? (
+                  <div className="mt-2.5 rounded-ab-sm bg-warning/12 p-2 text-ab-caption text-label">
+                    <p className="flex items-start gap-1.5">
+                      <Icon name="alert" size={13} className="mt-[1px] shrink-0 text-warning" />
+                      {t('dashboard.degradedWarning')}
+                    </p>
+                    <p className="mt-1.5 pl-5 text-ab-caption2 text-label-2">
+                      {t('dashboard.fieldDataDirSource')}：{state.info.paths.data_dir_source || '—'}
+                    </p>
+                    {state.info.paths.data_dir_attempts.length > 0 ? (
+                      <details className="mt-1 pl-5">
+                        <summary className="cursor-pointer text-ab-caption2 text-label-2">
+                          {t('dashboard.degradedAttempts')}（{state.info.paths.data_dir_attempts.length}）
+                        </summary>
+                        <ul className="ab-selectable mt-1 space-y-0.5 font-mono text-ab-caption2 text-label-3">
+                          {state.info.paths.data_dir_attempts.map((attempt) => (
+                            <li key={attempt} className="break-all">
+                              · {attempt}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 {state.info.shell === 'browser' ? (
                   <p className="mt-2.5 flex items-start gap-1.5 rounded-ab-sm bg-warning/12 p-2 text-ab-caption text-label">
                     <Icon name="alert" size={13} className="mt-[1px] shrink-0 text-warning" />
@@ -248,12 +276,6 @@ export function DashboardPage() {
                   <p className="mt-2.5 flex items-start gap-1.5 rounded-ab-sm bg-warning/12 p-2 text-ab-caption text-label">
                     <Icon name="alert" size={13} className="mt-[1px] shrink-0 text-warning" />
                     {t('dashboard.adminWarning')}
-                  </p>
-                ) : null}
-                {state.info.paths.degraded ? (
-                  <p className="mt-2.5 flex items-start gap-1.5 rounded-ab-sm bg-warning/12 p-2 text-ab-caption text-label">
-                    <Icon name="alert" size={13} className="mt-[1px] shrink-0 text-warning" />
-                    {t('dashboard.degradedWarning')}
                   </p>
                 ) : null}
                 {revealError ? (

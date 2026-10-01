@@ -15,6 +15,7 @@ from accountbook.paths import (
     DATA_SUBDIRS,
     PORTABLE_FLAG_NAME,
     AppPaths,
+    data_dir_candidates,
     get_paths,
     is_frozen,
     reset_paths_cache,
@@ -84,6 +85,92 @@ class TestDataDirResolution:
         assert paths.degraded is True
         assert paths.portable is False
         assert paths.data == local / "AccountBook"
+        # 必须留下"试过哪里、为什么失败"的记录，否则排障只能靠猜
+        assert paths.data_dir_attempts
+        assert any(str(program_root / "data") in item for item in paths.data_dir_attempts)
+        assert "LOCALAPPDATA" in paths.data_dir_source
+
+    def test_install_mode_falls_back_through_candidates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """安装版：首选 %LOCALAPPDATA% 不可写时，应继续尝试后续候选位置。
+
+        这是"应用不该因为一个目录不可写就打不开"的核心保障。
+        """
+        local = tmp_path / "localappdata"
+        local.mkdir()
+        # 首选位置被一个同名**文件**占住 → 必然不可写
+        (local / "AccountBook").write_text("occupied", encoding="utf-8")
+
+        roaming = tmp_path / "roaming"
+        profile = tmp_path / "profile"
+        program_root = tmp_path / "app"
+        program_root.mkdir()
+
+        monkeypatch.delenv("ACCOUNTBOOK_DATA_DIR", raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", str(local))
+        monkeypatch.setenv("APPDATA", str(roaming))
+        monkeypatch.setenv("USERPROFILE", str(profile))
+        monkeypatch.setenv("ACCOUNTBOOK_HOME", str(program_root))
+        reset_paths_cache()
+
+        paths = get_paths()
+        assert paths.data == roaming / "AccountBook", "应回退到 %APPDATA% 候选"
+        assert paths.degraded is True
+        assert paths.data_dir_attempts, "被跳过的首选位置必须留痕"
+
+    def test_install_mode_prefers_local_appdata_when_writable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """首选位置可用时不得降级 —— 否则就是凭空改变用户的数据位置。"""
+        local = tmp_path / "localappdata"
+        monkeypatch.delenv("ACCOUNTBOOK_DATA_DIR", raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", str(local))
+        monkeypatch.setenv("ACCOUNTBOOK_HOME", str(tmp_path / "app"))
+        reset_paths_cache()
+
+        paths = get_paths()
+        assert paths.data == local / "AccountBook"
+        assert paths.degraded is False
+        assert paths.data_dir_attempts == ()
+
+    def test_candidates_are_ordered_and_deduplicated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """候选顺序必须稳定：便携优先程序目录，安装优先 LOCALAPPDATA。
+
+        同时验证去重：不同来源指向同一目录时只保留一次。
+        """
+        profile = tmp_path / "profile"
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+        monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+        monkeypatch.setenv("USERPROFILE", str(profile))
+
+        install_candidates = data_dir_candidates(tmp_path / "app", portable=False)
+        assert install_candidates[0].path == tmp_path / "local" / "AccountBook"
+        assert install_candidates[-1].path.name == "AccountBook"
+        assert len({str(c.path).lower() for c in install_candidates}) == len(install_candidates)
+
+        portable_candidates = data_dir_candidates(tmp_path / "app", portable=True)
+        assert portable_candidates[0].path == tmp_path / "app" / "data"
+        assert portable_candidates[0].portable is True
+
+    def test_explicit_data_dir_is_never_overridden(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """显式指定的数据目录即使不可写也不回退 —— 尊重用户意图。
+
+        悄悄把账本存到别处，比明确报错更不可接受。
+        """
+        explicit = tmp_path / "not-writable"
+        explicit.write_text("occupied-by-file", encoding="utf-8")  # 同名文件占位
+        monkeypatch.setenv("ACCOUNTBOOK_DATA_DIR", str(explicit))
+        reset_paths_cache()
+
+        paths = get_paths()
+        assert paths.data == explicit.resolve()
+        assert paths.degraded is False
+        assert "显式指定" in paths.data_dir_source
 
     def test_ensure_creates_all_subdirs(self, app_paths: AppPaths) -> None:
         """``ensure()`` 必须一次性创建全部子目录（幂等）。"""
@@ -123,6 +210,7 @@ class TestAppPathsProperties:
         assert set(described) == {
             "program_root",
             "data_dir",
+            "data_dir_source",
             "resources",
             "portable",
             "frozen",
@@ -136,6 +224,8 @@ class TestAppPathsProperties:
             if key not in {"portable", "frozen", "degraded"}
         )
         assert described["portable"] in {True, False}
+        # 来源说明必须始终有值：日志与界面都依赖它解释"数据放在哪、为什么"
+        assert described["data_dir_source"]
 
 
 class TestHelpers:

@@ -23,11 +23,11 @@
 | 2 | 日/夜/跟随系统主题可切换并持久化 | ✅ | `PATCH /api/system/preferences` 写入 `config.json`；重启后沿用（pytest `TestPreferences`） |
 | 3 | 主题同时作用于 Windows 原生标题栏 | ✅ | `config.subscribe → shell.apply_theme → DwmSetWindowAttribute(20)` 链路（DWM 不可用时静默跳过） |
 | 4 | 本地服务安全边界生效 | ✅ | 无令牌 → 401；非环回 Host → 403；非白名单 Origin → 403；越权路径穿越被拦截（`tests/test_api.py`） |
-| 5 | 数据目录双模式 + 不可写降级 | ✅ | `tests/test_paths.py` 覆盖安装版 / 便携版 / 环境变量覆盖 / 便携目录不可写降级 |
+| 5 | 数据目录双模式 + 不可写降级 | ✅ | `tests/test_paths.py` 覆盖安装版 / 便携版 / 环境变量覆盖 / **候选链回退** / 去重 / 显式指定不回退 |
 | 6 | 数据与密钥被 git 隔离 | ✅ | `.gitignore` 排除 `data/`、`*.db`、`*.abk`、备份、附件、日志、模型、`dist/`、构建产物与本地临时目录 |
 | 7 | 中英双语可切换，漏译会在构建期暴露 | ✅ | `en-US.ts` 使用 `satisfies Messages`；`tsc --noEmit` 通过 |
 | 8 | 深浅两套主题视觉验收 | ✅ | [docs/screenshots](screenshots) 中的 5 张截图（浅色/深色仪表盘、占位页、设置、关于） |
-| 9 | 后端测试全绿 | ✅ | `pytest` **72 项全部通过** |
+| 9 | 后端测试全绿 | ✅ | `pytest` **78 项全部通过** |
 | 10 | 静态检查与格式化通过 | ✅ | `ruff check` 与 `ruff format --check` 无告警 |
 | 11 | 前端类型检查与构建通过 | ✅ | `npm run build`（含 `tsc --noEmit`）产出 ~27KB CSS + ~380KB JS（未压缩） |
 | 12 | **PyInstaller 打包 + 冒烟测试通过** | ✅ | onedir 产物 **49.2 MB**；冒烟测试：启动 → 本地服务就绪 → `/health` 正常 → 无令牌首页返回 401 |
@@ -89,6 +89,14 @@
 | pywebview 漏声明 `SystemEvents` | coreclr 下报误导性的 "pythonnet not installed" | `_warm_up_clr()` 在开窗前补上引用 |
 | windowed 构建静默退出 | 用户双击无任何反应、无任何线索 | 新增引导期崩溃报告（先落盘、再弹窗；有控制台时不弹窗以免阻塞自动化） |
 | 主按钮禁用态无视觉差异 | "记一笔"在 P0 不可用却看起来可点 | 降级为次级按钮 + 阶段徽标；并补齐 `disabled` 样式 |
+| **首选数据目录不可写即拒绝启动** | 用户双击只看到一个失败对话框；而同一环境下 PowerShell 能创建该目录、Python 的 `os.mkdir` 却被拒（`WinError 5`），说明"能不能写"必须实测而不能假设 | 改为**候选链 + 真实写入探测**：`%LOCALAPPDATA%` → `%APPDATA%` → 文档目录 → 程序目录 → 临时目录，第一个可写者胜出；仅在全部失败时弹窗并列出完整尝试记录；选中的来源与尝试记录同时暴露到日志、`/api/system/info` 与概览页 |
+
+> 关于上一条的补充：该问题最初表现为"数据目录不可写"的致命弹窗。
+> 排查中发现它并非单纯的权限问题 —— 在同一上下文里，
+> PowerShell 的 `New-Item` 能创建 `%LOCALAPPDATA%\AccountBook`，
+> 而 Python 的 `os.mkdir` 报 `WinError 5`。这类差异只有在**真实写入探测**下才会暴露，
+> 也正是"不要假设目录可用"这一设计原则的现实依据。
+> 修复后，打包产物在不带 `--data-dir` 的情况下已能正常启动并自动落到可写位置（实测验证）。
 
 ---
 

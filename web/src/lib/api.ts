@@ -32,6 +32,10 @@ export interface RuntimeInfo {
   clr_runtime: string | null
   paths: {
     data_dir: string
+    /** 数据目录来源说明（首选位置 / 回退位置） */
+    data_dir_source: string
+    /** 被跳过的候选位置及原因；为空表示首选位置可用 */
+    data_dir_attempts: string[]
     program_root: string
     log_file: string
     database: string

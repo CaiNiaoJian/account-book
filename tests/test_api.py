@@ -115,6 +115,18 @@ class TestSystemInfo:
         # 环境信息只用于本机展示，不应包含除路径外的任何用户数据字段
         assert "transactions" not in json.dumps(body)
 
+    def test_info_exposes_data_dir_provenance(self, authed_client: tuple[TestClient, Any]) -> None:
+        """接口必须说明数据目录的来源与尝试记录。
+
+        这是"应用悄悄换了数据存放位置"这类问题唯一的排查入口：
+        用户与支持人员都从这一处拿到事实。
+        """
+        test_client, _ = authed_client
+        paths = test_client.get("/api/system/info").json()["paths"]
+        assert paths["data_dir_source"]
+        assert isinstance(paths["data_dir_attempts"], list)
+        assert "shell" in test_client.get("/api/system/info").json()
+
     def test_reveal_data_dir_needs_token(self, client: tuple[TestClient, Any]) -> None:
         test_client, _ = client
         assert test_client.post("/api/system/reveal-data-dir").status_code == 401

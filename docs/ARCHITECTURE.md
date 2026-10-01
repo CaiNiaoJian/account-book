@@ -131,19 +131,49 @@ run.py / AccountBook.exe
 
 ## 5. 数据存放
 
-| 模式 | 数据目录 | 触发条件 |
-|---|---|---|
-| 安装版 | `%LOCALAPPDATA%\AccountBook` | 默认 |
-| 便携版 | `<exe 所在目录>\data` | 存在 `portable.flag` |
-| 覆盖 | 任意路径 | `ACCOUNTBOOK_DATA_DIR` 或 `--data-dir` |
+### 5.1 选择策略：逐个探测、真实写入、明确告知
 
-便携目录不可写时**自动降级**到用户目录，并置 `degraded=True`（界面会提示）。
-宁可用系统目录，也不要在 U 盘拔出后写出半截数据库。
+首选位置**不可写时不再直接失败**，而是按优先级尝试候选目录，
+每个候选都做**真实写入探测**（不是 `os.access` 那种不可靠的判断），
+第一个通过者胜出。最终结果连同"试过哪里、为什么失败"一起记录下来。
+
+**安装模式**
+
+| 顺序 | 位置 | 说明 |
+|---|---|---|
+| 1 | `%LOCALAPPDATA%\AccountBook` | 首选：本机数据语义，不漫游 |
+| 2 | `%APPDATA%\AccountBook` | 漫游目录 |
+| 3 | `%USERPROFILE%\Documents\AccountBook` | 用户可见、易备份 |
+| 4 | `<程序目录>\data` | 程序被放在可写位置时可用 |
+| 5 | `%TEMP%\AccountBook` | 最后手段；可能被系统清理 |
+
+**便携模式**（存在 `portable.flag`）：`<程序目录>\data` 优先，其后同上。
+
+**显式指定**（`--data-dir` / `ACCOUNTBOOK_DATA_DIR`）：**不探测、不回退**。
+用户已经明确表达了意图，悄悄换个位置存账本比直接报错更不可接受。
+
+只有当**全部候选都不可写**时才会弹出致命错误对话框，
+且消息中会列出完整的尝试记录（路径 + 来源 + 具体错误）。
+
+### 5.2 为什么这么做
+
+"双击一个程序，只看到一个失败对话框"是最糟糕的用户体验，
+而把账本放到第二、第三备选位置，用户几乎没有损失。
+反过来，**默默换了位置却不告诉用户**同样不可接受 —— 用户会以为数据丢了。
+
+因此选中的位置、来源与尝试记录通过三条路径暴露出来：
+
+* 启动日志（`data_dir` / `data_dir_source` / `degraded` 三行）；
+* `GET /api/system/info` → `paths.data_dir_source` 与 `paths.data_dir_attempts`；
+* 概览页「运行状态」卡片：降级时显示黄色提示、当前来源，并可展开查看被跳过的位置。
+
+### 5.3 目录布局
 
 ```
 <data>/
 ├─ accountbook.db        主库（P1 起）
 ├─ config.json           用户偏好（原子替换写入）
+├─ runtime-cache.json    机器事实缓存（如 CLR 运行时选择）
 ├─ attachments/          附件、用户卡面
 ├─ backups/              *.abk 加密备份
 ├─ logs/                 轮转日志 + crash-*.txt

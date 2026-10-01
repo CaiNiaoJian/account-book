@@ -126,6 +126,10 @@ export const zhCN = {
     fieldUptime: '已运行',
     fieldPort: '服务端口',
     fieldDataDir: '数据目录',
+    fieldDataDirSource: '目录来源',
+    degradedWarning:
+      '首选数据目录不可写，已自动改用下列位置保存账本（数据完全本地，不影响功能）。若希望换回，请修复上一处的写入权限后重启，或用 --data-dir 指定位置。',
+    degradedAttempts: '已跳过的位置',
     fieldLogFile: '日志文件',
     fieldMode: '运行模式',
     fieldShell: '界面外壳',
@@ -138,7 +142,6 @@ export const zhCN = {
     openDataDir: '打开数据目录',
     revealFailed: '打开数据目录失败：{message}',
     adminWarning: '当前以管理员身份运行，建议改用普通权限以避免文件权限混乱。',
-    degradedWarning: '便携目录不可写，已自动降级到用户数据目录。',
   },
 
   phase: {

@@ -71,13 +71,20 @@ powershell -ExecutionPolicy Bypass -File packaging\build_backend.ps1
 
 ## 数据放在哪里
 
-| 运行方式 | 数据目录 |
-|---|---|
-| 安装版 | `%LOCALAPPDATA%\AccountBook\` |
-| 便携版（存在 `portable.flag`） | 程序目录下的 `data\`；不可写时自动降级到用户目录并记录警告 |
+应用会**按优先级探测多个位置并真实写入验证**，第一个可用者即为数据目录：
 
-目录内包含 `accountbook.db`、`attachments/`、`backups/`、`logs/`、`plugins/`、`models/`、`exports/`、`cache/` 与 `webview/`。
-**这些内容全部被 [.gitignore](.gitignore) 排除**，不会被误提交到版本库。
+| 顺序 | 安装版 | 便携版 |
+|---|---|---|
+| 1 | `%LOCALAPPDATA%\AccountBook\` | `<程序目录>\data\` |
+| 2 | `%APPDATA%\AccountBook\` | `%LOCALAPPDATA%\AccountBook\` |
+| 3 | `%USERPROFILE%\Documents\AccountBook\` | （同上，依次回退） |
+| 4 | `<程序目录>\data\` | … |
+| 5 | `%TEMP%\AccountBook\`（可能被系统清理） | … |
+
+* 用 `--data-dir "D:\我的账本"` 可显式指定；**显式指定时不做任何回退**（尊重用户意图）。
+* 一旦发生回退，概览页的「运行状态」会显示黄色提示：当前数据目录、来源，以及被跳过的位置与原因。
+* 目录内包含 `accountbook.db`、`attachments/`、`backups/`、`logs/`、`plugins/`、`models/`、`exports/`、`cache/` 与 `webview/`。
+  **这些内容全部被 [.gitignore](.gitignore) 排除**，不会被误提交到版本库。
 
 ---
 

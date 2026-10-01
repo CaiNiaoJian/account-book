@@ -34,8 +34,12 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import APP_ID
+
 __all__ = [
     "AppPaths",
+    "DataDirCandidate",
+    "data_dir_candidates",
     "get_paths",
     "is_frozen",
     "is_portable",
@@ -114,19 +118,96 @@ def is_portable() -> bool:
     return (_program_root() / PORTABLE_FLAG_NAME).exists()
 
 
-def _is_writable(directory: Path) -> bool:
-    """探测目录是否真的可写。
+def _probe_writable(directory: Path) -> tuple[bool, str]:
+    """探测目录是否**真的**可写，并返回失败原因。
 
-    注意：仅用 ``os.access`` 在 Windows 上不可靠（ACL 与只读属性行为不同），
-    因此采用「真写一个临时文件再删除」的方式，这是最诚实的判定。
+    为什么不能只用 ``os.access``：在 Windows 上它只反映只读属性，
+    完全看不到 ACL 与 AppContainer 之类的访问限制。因此这里真写一个临时文件再删除 ——
+    这是最诚实的判定，也是唯一能提前发现"目录存在但写不进去"的办法。
+
+    返回 ``(是否可写, 原因)``。原因用于写入日志与错误对话框，
+    让用户看到的是"哪个路径因为什么不可用"，而不是一句笼统的失败。
     """
     try:
         directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return False, f"无法创建目录（{exc.__class__.__name__}: {exc}）"
+
+    try:
         with tempfile.NamedTemporaryFile(dir=directory, prefix=".ab_write_probe_", delete=True):
             pass
-        return True
-    except OSError:
-        return False
+    except OSError as exc:
+        return False, f"目录存在但不可写入（{exc.__class__.__name__}: {exc}）"
+    return True, "可写"
+
+
+@dataclass(frozen=True, slots=True)
+class DataDirCandidate:
+    """一个候选数据目录及其来源说明。
+
+    「来源」是给用户看的：当他发现账本没在预期位置时，
+    需要一眼看懂"为什么放到了这里"，而不是去读日志。
+    """
+
+    path: Path
+    source: str
+    portable: bool = False
+
+
+def data_dir_candidates(program_root: Path, *, portable: bool) -> list[DataDirCandidate]:
+    """按优先级给出候选数据目录列表（不探测，只排序）。
+
+    排序原则（谨慎且可解释）：
+
+    * **便携模式**：数据要跟着程序走，首选程序同级 ``data/``；
+      不可写（例如解压到了 Program Files 或只读介质）再逐级回退。
+    * **安装模式**：首选 ``%LOCALAPPDATA%``（本机数据语义，不漫游）；
+      之后依次尝试 ``%APPDATA%``、用户文档目录、程序同级 ``data/``，
+      最后才是系统临时目录。
+
+    把临时目录放在最后是有意的：它可能被系统清理，账本放在那里只是"总比打不开强"。
+    """
+    candidates: list[DataDirCandidate] = []
+    seen: set[Path] = set()
+
+    def add(path: Path | None, source: str, *, is_portable: bool = False) -> None:
+        if path is None:
+            return
+        resolved = Path(path)
+        # 去重：不同来源可能指向同一目录（例如把程序放在用户目录下）
+        key = str(resolved).rstrip("\\/").lower()
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(DataDirCandidate(path=resolved, source=source, portable=is_portable))
+
+    roaming_appdata = os.environ.get("APPDATA")
+    user_profile = os.environ.get("USERPROFILE") or str(Path.home())
+
+    if portable:
+        add(program_root / "data", "便携模式：程序目录下的 data", is_portable=True)
+
+    add(_default_local_appdata(), "用户本地数据目录（%LOCALAPPDATA%）")
+    add(Path(roaming_appdata) / APP_ID if roaming_appdata else None, "用户漫游数据目录（%APPDATA%）")
+    add(Path(user_profile) / "Documents" / APP_ID, "用户文档目录")
+    if not portable:
+        add(program_root / "data", "程序目录下的 data", is_portable=True)
+    add(Path(tempfile.gettempdir()) / APP_ID, "系统临时目录（可能被系统清理）")
+
+    return candidates
+
+
+def _default_local_appdata() -> Path:
+    """安装版首选数据目录：``%LOCALAPPDATA%\\AccountBook``。
+
+    保留为独立函数，是为了让 :func:`data_dir_candidates` 与文档
+    都能明确引用"首选位置"这一概念，而不必在代码里重复拼路径。
+    """
+    base = os.environ.get("LOCALAPPDATA")
+    if not base:
+        # 极端降级：非 Windows 或环境变量缺失时落在用户主目录
+        base = str(Path.home() / ".local" / "share")
+    return Path(base) / APP_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,7 +219,11 @@ class AppPaths:
     resources: Path  #: 只读资源根目录
     portable: bool  #: 是否为便携模式
     frozen: bool  #: 是否为打包运行
-    degraded: bool = False  #: 便携模式是否因不可写而降级
+    degraded: bool = False  #: 是否未使用首选数据目录（含便携降级与多级回退）
+    #: 当前数据目录的来源说明（用于日志、诊断与界面提示）
+    data_dir_source: str = ""
+    #: 被跳过/失败的候选目录及原因（"路径 — 来源：原因"），供排障使用
+    data_dir_attempts: tuple[str, ...] = ()
 
     # ---- 只读资源 -----------------------------------------------------------
     @property
@@ -236,6 +321,7 @@ class AppPaths:
         return {
             "program_root": str(self.program_root),
             "data_dir": str(self.data),
+            "data_dir_source": self.data_dir_source,
             "resources": str(self.resources),
             "portable": self.portable,
             "frozen": self.frozen,
@@ -258,9 +344,20 @@ def reset_paths_cache() -> None:
 def get_paths() -> AppPaths:
     """解析并缓存当前进程的路径集合。
 
-    便携模式若判定为不可写，会**自动降级**到 ``%LOCALAPPDATA%\\AccountBook``，
-    并置 ``degraded=True``。这是"谨慎"原则的体现：宁可用系统目录，
-    也不要在 U 盘拔出后写出半截数据库。
+    数据目录的选择遵循「**逐个探测、真实写入、明确告知**」三步：
+
+    1. 按 :func:`data_dir_candidates` 的优先级依次尝试候选目录；
+    2. 每个候选都做**真实写入探测**（``_probe_writable``），
+       只有确认可写才采用 —— 避免"目录存在但写不进去"这种最隐蔽的故障；
+    3. 记录最终选用的来源与被跳过的候选及原因，供日志、诊断与界面显示。
+
+    为什么不能简单地"首选不可用就报错退出"：
+    用户双击一个程序却只看到一个失败对话框，是最糟糕的体验；
+    而账本这类数据放到第二、第三备选位置，用户几乎没有损失。
+
+    唯一的例外是**显式指定**的数据目录（``--data-dir`` / ``ACCOUNTBOOK_DATA_DIR``）：
+    用户已经明确表达了意图，此时不做任何回退 —— 悄悄换个位置存放账本，
+    比直接报错更不可接受。
     """
     global _cached
     if _cached is not None:
@@ -268,35 +365,55 @@ def get_paths() -> AppPaths:
 
     program_root = _program_root()
     resources = resource_root()
-    portable = is_portable()
-    degraded = False
+    portable_flag = is_portable()
 
     env_data = os.environ.get("ACCOUNTBOOK_DATA_DIR")
+    attempts: list[str] = []
+
     if env_data:
-        # 显式覆盖：完全信任调用方（测试、多档案场景），不做降级判断
+        # 显式覆盖：完全信任调用方（测试、多档案场景），不探测、不回退
         data = Path(env_data).expanduser().resolve()
-    elif portable:
-        candidate = program_root / "data"
-        if _is_writable(candidate):
-            data = candidate
-        else:
-            degraded = True
-            data = _default_local_appdata()
-            _logger.warning(
-                "便携模式目标目录不可写，已降级到用户数据目录：%s → %s",
-                candidate,
-                data,
-            )
+        source = "显式指定（--data-dir / ACCOUNTBOOK_DATA_DIR）"
+        degraded = False
+        portable = False
     else:
-        data = _default_local_appdata()
+        candidates = data_dir_candidates(program_root, portable=portable_flag)
+        chosen: DataDirCandidate | None = None
+        for index, candidate in enumerate(candidates):
+            writable, reason = _probe_writable(candidate.path)
+            if writable:
+                chosen = candidate
+                if index > 0:
+                    _logger.warning(
+                        "首选数据目录不可用，已改用第 %d 个候选：%s（%s）",
+                        index + 1,
+                        candidate.path,
+                        candidate.source,
+                    )
+                break
+            attempts.append(f"{candidate.path} — {candidate.source}：{reason}")
+            _logger.info("候选数据目录不可用：%s（%s）", candidate.path, reason)
+
+        if chosen is None:
+            # 全部候选都不可写：仍返回首选路径，让 ensure() 抛出可读错误，
+            # 由 app.py 汇总所有尝试记录后给出可操作的提示。
+            chosen = candidates[0]
+            _logger.error("所有候选数据目录均不可写，已尝试 %d 个位置", len(attempts))
+
+        data = chosen.path
+        source = chosen.source
+        degraded = chosen is not candidates[0]
+        portable = chosen.portable
 
     _cached = AppPaths(
         program_root=program_root,
         data=data,
         resources=resources,
-        portable=portable and not degraded,
+        portable=portable,
         frozen=is_frozen(),
         degraded=degraded,
+        data_dir_source=source,
+        data_dir_attempts=tuple(attempts),
     )
     return _cached
 

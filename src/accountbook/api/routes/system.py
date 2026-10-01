@@ -40,6 +40,10 @@ class PathsInfo(BaseModel):
     """路径信息（只含路径字符串，不含任何文件内容）。"""
 
     data_dir: str
+    #: 当前数据目录的来源说明（例如"用户本地数据目录（%LOCALAPPDATA%）"）
+    data_dir_source: str
+    #: 被跳过或失败的候选位置及原因；为空表示首选位置即可用
+    data_dir_attempts: list[str]
     program_root: str
     log_file: str
     database: str
@@ -114,7 +118,20 @@ def get_info(request: Request) -> RuntimeInfo:
         is_admin=_is_admin(),
         shell=ctx.shell_kind,
         clr_runtime=ctx.clr_runtime,
-        paths=PathsInfo(**{k: v for k, v in ctx.paths.describe().items() if k in PathsInfo.model_fields}),
+        # 显式逐字段构造：不用 dict 过滤。
+        # 过滤写法的隐患是"字段名写错时静默丢字段"，而这里一旦漏字段
+        # Pydantic 会立刻报错 —— 让错误在开发期暴露，而不是等用户发现界面上少了一行。
+        paths=PathsInfo(
+            data_dir=str(ctx.paths.data),
+            data_dir_source=ctx.paths.data_dir_source,
+            data_dir_attempts=list(ctx.paths.data_dir_attempts),
+            program_root=str(ctx.paths.program_root),
+            log_file=str(ctx.paths.log_file),
+            database=str(ctx.paths.database),
+            portable=ctx.paths.portable,
+            frozen=ctx.paths.frozen,
+            degraded=ctx.paths.degraded,
+        ),
     )
 
 
