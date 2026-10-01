@@ -43,6 +43,12 @@
 | `debt_payments` | 还款记录（P1）。**本金与利息分开存**，否则算不出"还剩多少本金" | — |
 | `asset_ohlc` | 净值 K 线聚合（P3）。可由 `asset_snapshots` 完全推出，与日结共用脏标记 | — |
 | `transaction_templates` | 记账模板（P1）。存整套字段供一键填充；`tag_ids` 用 JSON 数组 | ✓ |
+| `attachments` | 附件（P1 尾巴 T5 / T6）。只存**相对引用**，文件落在 `<data>/attachments/` | — |
+| `piggy_banks` | 存钱罐（P4）。余额**不落库**，由 `piggy_bank_deposits` 求和 | ✓ |
+| `piggy_bank_rules` | 归集规则（P4）。一个罐子最多一条 —— 多条会让"这笔钱是哪条规则归集的"说不清 | — |
+| `piggy_bank_deposits` | 罐子进出（P4）。**一张表 + 带符号金额**，正存入负取出 | — |
+| `goals` | 储蓄目标（P4）。进度来自关联账户的实时余额 + 手工注入，两者都不落库 | ✓ |
+| `goal_contributions` | 目标的手工注入（P4）。与罐子存入分开：语义与取出规则都不同 | — |
 
 ### 2.1 P2 的派生缓存：口径见 `docs/CALENDAR_METRICS.md`
 

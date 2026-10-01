@@ -163,6 +163,20 @@ ECharts 图表（Apple 主题随日夜切换）。
 验收记录见 [docs/ACCEPTANCE_P2.md](docs/ACCEPTANCE_P2.md)，
 日历与日结指标口径见 [docs/CALENDAR_METRICS.md](docs/CALENDAR_METRICS.md)。
 
+**P3 已可用**：资产 K 线（蜡烛图 + 均线 + MACD/RSI + 回撤曲线 + 事件打点，
+长区间**自动降周期**并明确告知）、指标口径说明页。口径见
+[docs/KLINE_METRICS.md](docs/KLINE_METRICS.md)。
+
+**P4 已可用**：存钱罐（液面填充动画、里程碑庆祝、六种自动归集策略、
+**线性 + 加权双口径**预计达成日、达成后一键生成购买支出）、
+储蓄目标（进度来自关联账户的实时余额或手工注入）。
+验收记录见 [docs/ACCEPTANCE_P4.md](docs/ACCEPTANCE_P4.md)。
+
+**P1–P3 的收尾**（本轮补齐）：流水批量编辑与批量删除、列表与时间轴的
+**虚拟滚动**、回收站集中页面（12 类软删除实体）、流水附件（魔数校验 +
+体积上限 + 路径穿越防护）、私人卡面图片上传、列表 FLIP 动效、
+K 线区间框选对比、应用内全局快捷键（`Ctrl/Cmd+K`）。
+
 界面截图见 [docs/screenshots](docs/screenshots)。
 
 ---
