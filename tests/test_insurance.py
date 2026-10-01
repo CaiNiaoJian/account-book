@@ -348,13 +348,35 @@ class TestBalancesAndWithdrawals:
         insurance.delete_withdrawal(session, row.id)
         assert insurance.account_balances(session, profile_id=profile.id)["housing_fund"] == 240_000
 
-    def test_interest_from_the_statement_enters_the_balance(self, session) -> None:
-        """利息由用户录 —— 利率因城市与年份而异，我不编。"""
+    def test_interest_is_kept_unallocated(self, session) -> None:
+        """利息由用户录（利率因城市与年份而异，我不编），但**不摊到某个险种上**。
+
+        对账单上的利息是**账户级**的，而模型里没有按险种记利息的字段。
+        早先把它并进"公积金或养老"其中之一，结果是那笔钱被记到一个
+        **它未必属于**的账户上：公积金看着多了一截、养老少了一截，两处都不准。
+        """
         profile = self._funded(session)
-        before = insurance.account_balances(session, profile_id=profile.id)["housing_fund"]
+        before = insurance.account_balances(session, profile_id=profile.id)
         insurance.upsert_statement(session, profile.id, 2026, interest_minor=5_000)
-        after = insurance.account_balances(session, profile_id=profile.id)["housing_fund"]
-        assert after == before + 5_000
+        after = insurance.account_balances(session, profile_id=profile.id)
+
+        # 单独的键，不混进任何险种
+        assert after["interest"] == 5_000
+        assert after["housing_fund"] == before["housing_fund"]
+        # 合计仍然包含它
+        assert sum(after.values()) == sum(before.values()) + 5_000
+
+    def test_interest_does_not_corrupt_a_named_account(self, session) -> None:
+        """有多个账户时也不能随便挑一个塞进去。"""
+        profile = self._funded(session)
+        insurance.upsert_item(session, kind="pension", personal_rate_bps=800)
+        insurance.record_contribution(session, profile.id, PERIOD)
+        before = insurance.account_balances(session, profile_id=profile.id)
+        insurance.upsert_statement(session, profile.id, 2026, interest_minor=8_600)
+        after = insurance.account_balances(session, profile_id=profile.id)
+        for kind in ("housing_fund", "pension"):
+            assert after[kind] == before[kind], f"{kind} 不该被塞进利息"
+        assert after["interest"] == 8_600
 
 
 # -----------------------------------------------------------------------------

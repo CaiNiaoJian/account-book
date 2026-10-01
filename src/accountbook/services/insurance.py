@@ -619,8 +619,9 @@ def account_balances(session: Session, *, profile_id: int | None = None) -> dict
         )
     )
     if interest:
-        # 利息归到公积金与养老两个最常见的账户；没有明细时记为 total
-        balances["total_interest"] = int(interest)
+        # **利息单独一个键，不摊到任何险种。** 对账单上的利息是账户级的，
+        # 而模型里没有按险种记利息的字段 —— 塞进某个险种等于谎报归属。
+        balances["interest"] = int(interest)
 
     withdraw_conditions = []
     if profile_id is not None:
@@ -634,11 +635,15 @@ def account_balances(session: Session, *, profile_id: int | None = None) -> dict
     for kind, amount in withdrawn_rows:
         balances[str(kind)] = balances.get(str(kind), 0) - int(amount)
 
-    if "total_interest" in balances:
-        # 把利息并进"最常见的有账户的险种"里，而不是留一个游离的键
-        interest_amount = balances.pop("total_interest")
-        target = "housing_fund" if "housing_fund" in balances else "pension"
-        balances[target] = balances.get(target, 0) + interest_amount
+    # **利息不摊到任何险种上。**
+    #
+    # 早先的写法是把它并进"公积金或养老"其中之一，理由是"不留游离的键"。
+    # 那个理由站不住：对账单上的利息是**账户级**的，而模型里没有按险种记利息
+    # 的字段，于是那笔钱被记到了一个**它未必属于**的账户上 ——
+    # 公积金的余额看起来多了一截，而养老的少了一截，两处都不准。
+    #
+    # 现在单独作为 `interest` 返回，界面显示成"利息（未分配）"。
+    # 合计不变（它本来就在合计里），但**不再谎报归属**。
     return balances
 
 

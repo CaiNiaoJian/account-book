@@ -656,6 +656,18 @@ export function PayrollPage() {
                 </div>
                 {/* **逐年累积**：与逐月图各说一件事 ——
                     按月看节奏，按年看趋势。跨年的比例调整只有在按年图上才看得出来。 */}
+                {/* 利息单独列：它是账户级的，模型里没有按险种记利息的字段，
+                    因此**不摊到任何险种**上，而是明确标成"未分配" */}
+                {insurance.account_balances.interest ? (
+                  <p className="mt-1 text-ab-caption1 text-label-3">
+                    {t('payroll.unallocatedInterest')}
+                    {' '}
+                    {formatValue(insurance.account_balances.interest)}
+                    {' — '}
+                    {t('payroll.unallocatedInterestHint')}
+                  </p>
+                ) : null}
+
                 {insurance.by_year.length > 0 ? (
                   <div className="mt-3">
                     <div className="ab-section-label !px-0">{t('payroll.byYear')}</div>
@@ -1398,6 +1410,7 @@ function InsuranceDialog({
   const [profileId, setProfileId] = useState<number | null>(null)
   const [computed, setComputed] = useState<InsuranceCompute | null>(null)
   const [statement, setStatement] = useState<InsuranceStatement | null>(null)
+  const [withdrawals, setWithdrawals] = useState<InsuranceWithdrawal[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
@@ -1412,8 +1425,14 @@ function InsuranceDialog({
     const chosen = profileId ?? profileList.items[0]?.id ?? null
     setProfileId(chosen)
     if (chosen !== null) {
-      setComputed(await api.computeInsurance(chosen))
-      setStatement(await api.insuranceStatement(chosen, Number(period.slice(0, 4))))
+      const [c, s, w] = await Promise.all([
+        api.computeInsurance(chosen),
+        api.insuranceStatement(chosen, Number(period.slice(0, 4))),
+        api.insuranceWithdrawals(chosen),
+      ])
+      setComputed(c)
+      setStatement(s)
+      setWithdrawals(w.items as unknown as InsuranceWithdrawal[])
     }
   }, [profileId, period])
 
@@ -1624,6 +1643,68 @@ function InsuranceDialog({
           </div>
         ) : null}
 
+        {/* 提取记录。**余额是算出来的**，因此提取必须是一条记录而不是"改余额" ——
+            用户从这里记一笔提取，余额会跟着减，且能追溯到日期与原因。 */}
+        {profileId !== null ? (
+          <div className="space-y-2 border-t border-separator/60 pt-3">
+            <div className="ab-section-label !px-0">{t('payroll.withdrawals')}</div>
+            {withdrawals.length === 0 ? (
+              <p className="text-ab-footnote text-label-3">{t('payroll.noWithdrawal')}</p>
+            ) : (
+              <div className="space-y-1">
+                {withdrawals.map((row) => (
+                  <div key={row.id} className="flex flex-wrap items-center gap-2 text-ab-footnote">
+                    <span className="min-w-0 flex-1 truncate text-label-2">
+                      {row.item_name}
+                      <span className="ml-1.5 text-ab-caption1 text-label-3">
+                        {t(`payroll.withdrawReason.${row.reason}`)}
+                      </span>
+                    </span>
+                    <span className="ab-tnum text-ab-caption1 text-label-3">{row.occurred_at}</span>
+                    <span className="ab-tnum text-negative">
+                      −{displayMinor(row.amount_minor, 'CNY')}
+                    </span>
+                    <button
+                      type="button"
+                      className="ab-icon-btn shrink-0 hover:text-negative"
+                      aria-label={t('common.delete')}
+                      onClick={() =>
+                        void (async () => {
+                          await api.deleteInsuranceWithdrawal(row.id)
+                          await load()
+                        })()
+                      }
+                    >
+                      <Icon name="trash" size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <WithdrawalForm
+              items={computed?.items ?? []}
+              busy={busy}
+              error={error}
+              onSubmit={async (payload) => {
+                if (profileId === null) return
+                setBusy(true)
+                setError(null)
+                try {
+                  await api.addInsuranceWithdrawal({ profile_id: profileId, ...payload })
+                  await load()
+                } catch (cause) {
+                  // 余额不足是 409，要把后端给的数字原样显示出来 ——
+                  // 只说"操作失败"会让用户不知道该改什么
+                  setError(cause instanceof ApiError ? cause.detail : String(cause))
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            />
+          </div>
+        ) : null}
+
         {/* 年度对账：**差异是这份报表的全部意义** */}
         {statement ? (
           <div className="space-y-2 border-t border-separator/60 pt-3">
@@ -1661,6 +1742,115 @@ function InsuranceDialog({
         }}
       />
     </Modal>
+  )
+}
+
+interface InsuranceWithdrawal {
+  id: number
+  item_id: number
+  item_name: string
+  amount_minor: number
+  occurred_at: string
+  reason: string
+}
+
+/**
+ * 记录一笔提取。
+ *
+ * 只列出**有个人账户**的险种：养老、医疗、公积金。
+ * 失业/工伤/生育没有个人账户，让它们出现在这里只会让人以为可以提。
+ */
+function WithdrawalForm({
+  items,
+  busy,
+  error,
+  onSubmit,
+}: {
+  items: { item_id: number; kind: string; name: string; to_account_minor: number }[]
+  busy: boolean
+  error: string | null
+  onSubmit: (payload: Record<string, unknown>) => Promise<void>
+}) {
+  const { t } = useI18n()
+  const eligible = items.filter((item) => item.to_account_minor > 0)
+  const [itemId, setItemId] = useState('')
+  const [amount, setAmount] = useState('')
+  const [day, setDay] = useState(() => new Date().toISOString().slice(0, 10))
+  const [reason, setReason] = useState('purchase')
+
+  useEffect(() => {
+    if (!itemId && eligible.length > 0) setItemId(String(eligible[0]!.item_id))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eligible.length])
+
+  if (eligible.length === 0) {
+    return <p className="text-ab-caption1 text-label-3">{t('payroll.noWithdrawableAccount')}</p>
+  }
+
+  return (
+    <div className="space-y-2 rounded-ab-sm bg-surface-2/50 p-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          className="ab-select !w-auto min-w-24"
+          value={itemId}
+          aria-label={t('payroll.withdrawItem')}
+          onChange={(event) => setItemId(event.target.value)}
+        >
+          {eligible.map((item) => (
+            <option key={item.item_id} value={item.item_id}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+        <input
+          className="ab-input ab-tnum !w-24"
+          inputMode="decimal"
+          value={amount}
+          placeholder={t('payroll.withdrawAmount')}
+          aria-label={t('payroll.withdrawAmount')}
+          onChange={(event) => setAmount(event.target.value)}
+        />
+        <input
+          type="date"
+          className="ab-input ab-tnum !w-auto"
+          value={day}
+          aria-label={t('payroll.withdrawDate')}
+          onChange={(event) => setDay(event.target.value)}
+        />
+        <select
+          className="ab-select !w-auto"
+          value={reason}
+          aria-label={t('payroll.withdrawReasonLabel')}
+          onChange={(event) => setReason(event.target.value)}
+        >
+          {(['purchase', 'rent', 'retirement', 'medical', 'settlement', 'other'] as const).map(
+            (value) => (
+              <option key={value} value={value}>
+                {t(`payroll.withdrawReason.${value}`)}
+              </option>
+            ),
+          )}
+        </select>
+        <button
+          type="button"
+          className="ab-btn-secondary shrink-0"
+          disabled={busy || !amount || !itemId}
+          onClick={() =>
+            void onSubmit({
+              item_id: Number(itemId),
+              amount_minor: Math.round(Number(amount) * 100),
+              occurred_at: day,
+              reason,
+            })
+          }
+        >
+          <Icon name="plus" size={12} />
+          {t('payroll.addWithdrawal')}
+        </button>
+      </div>
+      {error ? <p className="text-ab-caption1 text-negative">{error}</p> : null}
+      <p className="text-ab-caption1 text-label-3">{t('payroll.withdrawHint')}</p>
+    </div>
   )
 }
 
