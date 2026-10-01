@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { Icon } from '@/components/Icon'
 import { Card, EmptyState, Skeleton } from '@/components/ui'
@@ -42,8 +43,18 @@ export function LedgerPage() {
   const { preferences } = usePreferences()
   const { accounts } = useLedger()
 
-  const [range, setRange] = useState(defaultRange)
-  const [accountId, setAccountId] = useState<number | null>(null)
+  // `/ledger?account=&start=&end=` —— 与日历的 `?day=`、债务的 `?plan=` 同一个理由：
+  // 让"某个账户某段时间的台账"成为可分享、可加书签的链接
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [range, setRange] = useState(() => {
+    const start = searchParams.get('start')
+    const end = searchParams.get('end')
+    return start && end ? { start, end } : defaultRange()
+  })
+  const [accountId, setAccountId] = useState<number | null>(() => {
+    const raw = searchParams.get('account')
+    return raw && /^\d+$/.test(raw) ? Number(raw) : null
+  })
   const [document, setDocument] = useState<LedgerDocument | null>(null)
   const [trial, setTrial] = useState<TrialBalance | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -54,6 +65,17 @@ export function LedgerPage() {
   useEffect(() => {
     if (accountId === null && accounts.length > 0) setAccountId(accounts[0]!.id)
   }, [accounts, accountId])
+
+  // 把当前选择同步进 URL：刷新与分享都能回到同一个视图
+  useEffect(() => {
+    if (accountId === null) return
+    const next = new URLSearchParams()
+    next.set('account', String(accountId))
+    next.set('start', range.start)
+    next.set('end', range.end)
+    setSearchParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountId, range.start, range.end])
 
   const load = useCallback(async () => {
     if (accountId === null) return
@@ -281,7 +303,11 @@ export function LedgerPage() {
                               {t('ledgerPage.incoming')}
                             </span>
                           ) : null}
-                          <span className="truncate">{entry.payee || entry.note || '—'}</span>
+                          {/* 转账通常没有商户：此时摘要只显示"→ 对方账户"。
+    不加这个分支会渲染成 `— →支付宝`，那个破折号看起来像渲染坏了 */}
+                          <span className="truncate">
+                            {entry.payee || entry.note || (entry.counterparty ? '' : '—')}
+                          </span>
                           {entry.counterparty ? (
                             <span className="text-ab-caption1 text-label-3">
                               → {entry.counterparty}

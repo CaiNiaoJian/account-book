@@ -48,9 +48,30 @@ function useValueFormatter(unit: string | undefined) {
 }
 
 /** 中性数据集 → ECharts 配置。**这是图表唯一的翻译点。** */
+/**
+ * 轴上的短标签。
+ *
+ * 完整 ISO 日期（`2026-10-01`）在 31 天的日线图上是 10 个字符宽 × 31 个，
+ * 挤在一起就成了 `2026-10-012026-10-03…` —— 一个字都读不出来。
+ * 图表的轴只需要"哪一天"，因此截成 `10-01`。
+ */
+function shortLabel(label: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(label)
+  return match ? `${match[2]}-${match[3]}` : label
+}
+
+/** 轴刻度上的金额：整数元，不带两位小数。刻度是给眼睛定位用的，不是账目 */
+function axisMoney(value: number): string {
+  const yuan = value / 100
+  if (Math.abs(yuan) >= 10_000) return `${(yuan / 10_000).toFixed(1)}万`
+  return `¥${Math.round(yuan).toLocaleString('zh-CN')}`
+}
+
 function chartOption(block: ReportBlock, formatValue: (value: unknown) => string) {
   const points = block.dataset?.points ?? []
-  const labels = points.map((point, index) => point.date ?? point.name ?? String(index + 1))
+  const labels = points.map((point, index) =>
+    shortLabel(String(point.date ?? point.name ?? index + 1)),
+  )
   const values = points.map((point) => Number(point.value_minor ?? point.value ?? 0))
   const axisColor = resolveToken('text-3')
   const splitColor = resolveToken('separator')
@@ -101,7 +122,15 @@ function chartOption(block: ReportBlock, formatValue: (value: unknown) => string
     },
     yAxis: {
       type: 'value',
-      axisLabel: { color: axisColor, fontSize: 10, formatter: (value: number) => formatValue(value) },
+      // 刻度用短格式：`formatValue` 会给出 `¥62.50`，刻度一多就叠在一起
+      axisLabel: {
+        color: axisColor,
+        fontSize: 10,
+        formatter:
+          block.unit === 'money'
+            ? (value: number) => axisMoney(value)
+            : (value: number) => formatValue(value),
+      },
       splitLine: { lineStyle: { color: splitColor, type: 'dashed' } },
     },
     series: [
