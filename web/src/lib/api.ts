@@ -1120,6 +1120,112 @@ export const api = {
   deleteAttachment: (id: number) =>
     request<void>(`/api/attachments/${id}`, { method: 'DELETE' }),
 
+// ---- P4：存钱罐 ------------------------------------------------------------
+  piggyBanks: (params: { status?: string; includeDeleted?: boolean } = {}) =>
+    request<PiggyBankList>(`/api/piggy/banks${query(params)}`),
+  piggyBank: (id: number) => request<PiggyBankDetail>(`/api/piggy/banks/${id}`),
+  createPiggyBank: (payload: {
+    name: string
+    target_amount_minor: number
+    target_name?: string
+    deadline?: string | null
+    kind?: BankKind
+    priority?: number
+    skin?: string
+    hide_amount?: boolean
+    goal_id?: number | null
+    note?: string
+    initial_minor?: number
+  }) =>
+    request<PiggyBank>('/api/piggy/banks', { method: 'POST', body: JSON.stringify(payload) }),
+  updatePiggyBank: (id: number, payload: Record<string, unknown>) =>
+    request<PiggyBank>(`/api/piggy/banks/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deletePiggyBank: (id: number) =>
+    request<void>(`/api/piggy/banks/${id}`, { method: 'DELETE' }),
+  restorePiggyBank: (id: number) =>
+    request<PiggyBank>(`/api/piggy/banks/${id}/restore`, { method: 'POST' }),
+  piggyDeposits: (id: number) =>
+    request<{ items: PiggyDeposit[]; count: number; balance_minor: number }>(
+      `/api/piggy/banks/${id}/deposits`,
+    ),
+  addPiggyDeposit: (
+    id: number,
+    payload: { amount_minor: number; kind?: string; occurred_at?: string; note?: string },
+  ) =>
+    request<PiggyDeposit>(`/api/piggy/banks/${id}/deposits`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deletePiggyDeposit: (id: number) =>
+    request<void>(`/api/piggy/deposits/${id}`, { method: 'DELETE' }),
+  setPiggyRule: (id: number, payload: Record<string, unknown>) =>
+    request<PiggyBank>(`/api/piggy/banks/${id}/rule`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deletePiggyRule: (id: number) =>
+    request<void>(`/api/piggy/banks/${id}/rule`, { method: 'DELETE' }),
+  /** 到期规则预览（只看不写） */
+  piggyDueRules: (today?: string) =>
+    request<{ items: { bank_id: number; bank_name: string; strategy: string }[] }>(
+      `/api/piggy/rules/due${query({ today })}`,
+    ),
+  /** 执行到期规则。`dryRun` 默认 true —— 对自动扣钱的功能，"先给我看"才是默认 */
+  runPiggyRules: (payload: { today?: string; dry_run?: boolean } = {}) =>
+    request<PiggyAction>('/api/piggy/rules/run', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  /** 对刚记的流水应用事件驱动规则（四舍五入 / 收入百分比 / 分类触发） */
+  applyPiggyRules: (transactionIds: number[], dryRun = false) =>
+    request<PiggyAction>(`/api/piggy/rules/apply${query({ dry_run: dryRun })}`, {
+      method: 'POST',
+      body: JSON.stringify(transactionIds),
+    }),
+  achievePiggyBank: (
+    id: number,
+    payload: { account_id?: number | null; settle?: boolean; create_transaction?: boolean; occurred_at?: string },
+  ) =>
+    request<PiggyBank>(`/api/piggy/banks/${id}/achieve`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  injectPiggyBank: (id: number, payload: { goal_id?: number | null; settle_bank?: boolean } = {}) =>
+    request<PiggyBank>(`/api/piggy/banks/${id}/inject`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  // ---- P4：储蓄目标 ----------------------------------------------------------
+  goals: (params: { status?: string; includeDeleted?: boolean } = {}) =>
+    request<GoalList>(`/api/goals${query(params)}`),
+  goal: (id: number) => request<GoalDetail>(`/api/goals/${id}`),
+  createGoal: (payload: {
+    name: string
+    target_amount_minor: number
+    deadline?: string | null
+    kind?: GoalKind
+    account_id?: number | null
+    priority?: number
+    hide_amount?: boolean
+    note?: string
+  }) => request<Goal>('/api/goals', { method: 'POST', body: JSON.stringify(payload) }),
+  updateGoal: (id: number, payload: Record<string, unknown>) =>
+    request<Goal>(`/api/goals/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteGoal: (id: number) => request<void>(`/api/goals/${id}`, { method: 'DELETE' }),
+  restoreGoal: (id: number) =>
+    request<Goal>(`/api/goals/${id}/restore`, { method: 'POST' }),
+  contributeGoal: (id: number, payload: { amount_minor: number; occurred_at?: string; note?: string }) =>
+    request<{ items: GoalContribution[]; count: number; saved_minor: number }>(
+      `/api/goals/${id}/contributions`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+  deleteGoalContribution: (id: number) =>
+    request<void>(`/api/goals/contributions/${id}`, { method: 'DELETE' }),
+
   /** 指标参数。口径说明页直接渲染它，参数一改说明页自动跟着变 */
   klineParams: () => request<KlineParams>('/api/kline/params'),
 
@@ -1268,4 +1374,165 @@ export interface ParsedDraft {
   matched: Record<string, string>
   unmatched: string[]
   raw: string
+}
+
+// ---- P4：存钱罐与储蓄目标 ----------------------------------------------------
+export type BankKind = 'one_time' | 'long_term' | 'shared'
+export type BankStatus = 'active' | 'achieved' | 'paused' | 'abandoned'
+export type RuleStrategy =
+  | 'roundup'
+  | 'daily_fixed'
+  | 'weekly_fixed'
+  | 'income_percent'
+  | 'monthly_surplus'
+  | 'category_trigger'
+export type GoalKind = 'purchase' | 'emergency' | 'travel' | 'education' | 'other'
+
+/** 一个口径的预计达成日 */
+export interface EtaEstimate {
+  rate_per_day_minor: number
+  days: number
+  eta: string
+}
+
+/**
+ * 预计达成日。**两个口径并存**（见后端 docstring）：
+ * 线性对"最近停止存钱了"无感，加权对节奏敏感但会被一次性大额拉飞。
+ * `divergent` 为真时两个口径差距超过一倍 —— 那个分歧本身是有用的信息。
+ */
+export interface BankEta {
+  balance_minor: number
+  remaining_minor: number
+  ratio: number
+  deadline: string | null
+  days_to_deadline: number | null
+  elapsed_days: number
+  /** 已达成时为真，此时下面两个口径都是 null */
+  achieved: boolean
+  linear: EtaEstimate | null
+  weighted: EtaEstimate | null
+  divergent: boolean
+  on_track: boolean | null
+  required_per_day_minor: number | null
+}
+
+export interface PiggyRule {
+  id: number
+  piggy_bank_id: number
+  strategy: RuleStrategy
+  enabled: boolean
+  roundup_unit_minor: number
+  fixed_amount_minor: number
+  percent_bps: number
+  category_ids: number[]
+  account_id: number | null
+  deduct_from_account: boolean
+  last_run_date: string | null
+}
+
+export interface PiggyBank {
+  id: number
+  name: string
+  target_name: string
+  target_amount_minor: number
+  balance_minor: number
+  currency: string
+  deadline: string | null
+  kind: BankKind
+  status: BankStatus
+  member_id: number | null
+  priority: number
+  skin: string
+  hide_amount: boolean
+  goal_id: number | null
+  achieved_at: string | null
+  celebrated: boolean
+  sort_order: number
+  note: string
+  ratio: number
+  milestones: number[]
+  deleted_at: string | null
+  rule: PiggyRule | null
+  eta?: BankEta | null
+  settled_minor?: number | null
+  injected_minor?: number | null
+}
+
+export interface PiggyDeposit {
+  id: number
+  piggy_bank_id: number
+  amount_minor: number
+  occurred_at: string
+  tz_offset_minutes: number
+  source_account_id: number | null
+  transaction_id: number | null
+  kind: string
+  note: string
+}
+
+export interface PiggyBankDetail extends PiggyBank {
+  deposits: PiggyDeposit[]
+}
+
+export interface PiggyBankList {
+  items: PiggyBank[]
+  count: number
+  active_target_minor: number
+  saved_minor: number
+}
+
+export interface Goal {
+  id: number
+  name: string
+  target_amount_minor: number
+  saved_minor: number
+  currency: string
+  deadline: string | null
+  kind: GoalKind
+  status: BankStatus
+  account_id: number | null
+  member_id: number | null
+  priority: number
+  hide_amount: boolean
+  achieved_at: string | null
+  celebrated: boolean
+  sort_order: number
+  note: string
+  ratio: number
+  milestones: number[]
+  deleted_at: string | null
+}
+
+export interface GoalContribution {
+  id: number
+  goal_id: number
+  amount_minor: number
+  occurred_at: string
+  tz_offset_minutes: number
+  note: string
+}
+
+export interface GoalDetail extends Goal {
+  contributions: GoalContribution[]
+}
+
+export interface GoalList {
+  items: Goal[]
+  count: number
+  active_target_minor: number
+  saved_minor: number
+}
+
+/** 归集规则执行结果（dry_run 时只是预览） */
+export interface PiggyAction {
+  items: {
+    bank_id: number
+    bank_name: string
+    strategy: string
+    amount_minor: number
+    transaction_id?: number
+  }[]
+  count: number
+  total_minor: number
+  dry_run: boolean
 }

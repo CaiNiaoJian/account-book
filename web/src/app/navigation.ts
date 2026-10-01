@@ -39,10 +39,10 @@ export interface NavGroup {
  * 路由表（`routes.tsx` 的 `IMPLEMENTED_ROUTES`）据实挂载真实页面。
  * 两处若各写一份，就必然出现"标着已实现、点进去是占位页"。
  */
-export const IMPLEMENTED_PHASES = new Set(['P0', 'P1', 'P2', 'P3'])
+export const IMPLEMENTED_PHASES = new Set(['P0', 'P1', 'P2', 'P3', 'P4'])
 
 /** 兼容旧引用：当前最新完成阶段 */
-export const IMPLEMENTED_PHASE = 'P3'
+export const IMPLEMENTED_PHASE = 'P4'
 
 export const NAV_GROUPS: NavGroup[] = [
   {
