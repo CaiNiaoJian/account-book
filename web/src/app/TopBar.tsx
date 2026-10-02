@@ -12,12 +12,13 @@
  */
 
 import { motion } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 
 import { Icon } from '@/components/Icon'
 import { IconButton, Segmented } from '@/components/ui'
 import { useI18n, LANGUAGES, LANGUAGE_LABELS } from '@/i18n'
 import type { LanguageCode, ThemePreference } from '@/lib/boot'
-import { ALL_NAV_ITEMS, IMPLEMENTED_PHASE } from './navigation'
+import { ALL_NAV_ITEMS, isImplemented } from './navigation'
 import { usePreferences } from './preferences'
 
 interface TopBarProps {
@@ -30,6 +31,7 @@ interface TopBarProps {
 export function TopBar({ title, phase, collapsed, onToggleCollapse }: TopBarProps) {
   const { t, language } = useI18n()
   const { preferences, update, saving, syncError } = usePreferences()
+  const navigate = useNavigate()
 
   const themeOptions: { value: ThemePreference; label: string; icon: 'sun' | 'moon' | 'monitor'; title: string }[] = [
     { value: 'light', label: '', icon: 'sun', title: t('topbar.themeLight') },
@@ -39,9 +41,18 @@ export function TopBar({ title, phase, collapsed, onToggleCollapse }: TopBarProp
 
   // 快捷记账的可用性由导航清单驱动：模块一旦在本阶段实现，按钮自动变为可用，
   // 不需要在工具栏里硬编码阶段号（避免两处维护导致不一致）。
+  //
+  // **这里曾经写成 `quickAddPhase === IMPLEMENTED_PHASE`，那是个会自己坏掉的判断。**
+  // 快捷记账属于 P1，而 `IMPLEMENTED_PHASE` 随项目推进变成了 'P6'，
+  // 于是 `'P1' === 'P6'` 为假，按钮被渲染成「禁用 + P1 徽标」——
+  // 一个早已完成的功能，在阶段推进之后自己变成了"未实现"。
+  //
+  // 正确的判断是"这个模块的阶段**已包含在**已完成阶段里"，
+  // 也就是 `isImplemented()`（侧边栏一直用的是它）。
+  // 相等判断只在"最新阶段恰好就是这个模块的阶段"时才对，而那只是巧合。
   const quickAddItem = ALL_NAV_ITEMS.find((item) => item.id === 'quickAdd')
   const quickAddPhase = quickAddItem?.phase ?? 'P1'
-  const quickAddAvailable = quickAddPhase === IMPLEMENTED_PHASE
+  const quickAddAvailable = quickAddItem ? isImplemented(quickAddItem) : false
 
   return (
     <header className="ab-material relative z-10 flex h-[52px] shrink-0 items-center gap-2 border-b border-separator/60 px-3.5">
@@ -97,9 +108,19 @@ export function TopBar({ title, phase, collapsed, onToggleCollapse }: TopBarProp
 
       {/* ---- 主操作：记一笔 ------------------------------------------------
           尚未实现的阶段**不**把它画成一个醒目的可用按钮 —— 那会误导用户。
-          这里降级为次级按钮 + 阶段徽标，并把原因写进 tooltip。 */}
+          这里降级为次级按钮 + 阶段徽标，并把原因写进 tooltip。
+
+          可用时**必须挂 onClick**：这个按钮此前只有外观没有行为，
+          即使可用性判断正确，点下去也什么都不会发生。
+          与全局快捷键走同一条路由（`/quick-add`），
+          由流水页据路由打开快捷记账对话框。 */}
       {quickAddAvailable ? (
-        <button type="button" className="ab-btn-primary ml-1" title={t('topbar.quickAdd')}>
+        <button
+          type="button"
+          className="ab-btn-primary ml-1"
+          title={t('topbar.quickAdd')}
+          onClick={() => navigate('/quick-add')}
+        >
           <Icon name="plus" size={15} strokeWidth={2.2} />
           {t('topbar.quickAdd')}
         </button>

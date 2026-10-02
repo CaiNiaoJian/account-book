@@ -8,7 +8,13 @@
  *   * 已在对应阶段实现的模块 → 真实页面组件；
  *   * 其余模块 → 统一占位页（自动带模块名、阶段与规划说明）。
  * 当某个模块完成时，只需在此登记它的路径，
- * 导航徽标由 `IMPLEMENTED_PHASES` 自动同步 —— 不要再手工改徽标。
+ * 导航徽标由 `app/navigation.ts` 的 `IMPLEMENTED_PHASES` 自动同步 —— 不要再手工改徽标。
+ *
+ * **阶段清单只有一份真相，在 `app/navigation.ts`。**
+ * 这里曾经又导出一份 `IMPLEMENTED_PHASES`（停在 P3，而当时已做到 P6），
+ * 没有任何地方导入它 —— 但它是 export 的、注释还指向它，看起来像权威。
+ * 下一个人从 `routes` 里 import 它就会拿到一份过期四期的清单，
+ * 于是"某些已完成的功能莫名其妙变成不可用"。重复的真相比没有真相更危险。
  */
 
 import type { ReactNode } from 'react'
@@ -67,14 +73,6 @@ const IMPLEMENTED_ROUTES: Record<string, ReactNode> = {
   '/settings': <SettingsPage />,
   '/about': <AboutPage />,
 }
-
-/**
- * 已完成的阶段。
- *
- * 导航徽标据此判断"这一项能不能点" —— 徽标与页面实现共用同一份事实，
- * 因此不可能出现"标着已实现、点进去是占位页"。
- */
-export const IMPLEMENTED_PHASES = new Set(['P0', 'P1', 'P2', 'P3'])
 
 /** 404 页面：保持与占位页一致的视觉语言 */
 function NotFoundPage() {
