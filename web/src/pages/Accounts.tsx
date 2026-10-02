@@ -17,7 +17,7 @@ import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { staggerContainer, staggerItem } from '@/design/motion'
 import { useI18n } from '@/i18n'
 import { api, ApiError, type Account } from '@/lib/api'
-import { displayMinor } from '@/lib/format'
+import { displayMinor, minorUnits, parseAmountToMinor } from '@/lib/format'
 import { usePreferences } from '@/app/preferences'
 
 import { IconPicker, Modal } from '@/features/ledger/parts'
@@ -39,12 +39,12 @@ const ACCOUNT_TYPES = [
 interface FormState {
   name: string
   type: string
-  initial_balance_minor: number
+  initial_balance: string
   icon: string
   color: string
   institution: string
   card_no_tail: string
-  credit_limit_minor: number
+  credit_limit: string
   bill_day: number | null
   due_day: number | null
   include_in_net_worth: boolean
@@ -54,12 +54,12 @@ interface FormState {
 const EMPTY_FORM: FormState = {
   name: '',
   type: 'debit_card',
-  initial_balance_minor: 0,
+  initial_balance: '0',
   icon: 'accounts',
   color: 'accent',
   institution: '',
   card_no_tail: '',
-  credit_limit_minor: 0,
+  credit_limit: '0',
   bill_day: null,
   due_day: null,
   include_in_net_worth: true,
@@ -96,7 +96,7 @@ export function AccountsPage() {
   const visible = showArchived ? allAccounts : allAccounts.filter((item) => !item.is_archived)
   const totals = accounts.reduce(
     (accumulator, item) => {
-      if (!item.include_in_net_worth) return accumulator
+      if (!item.include_in_net_worth || item.currency !== 'CNY') return accumulator
       if (item.balance_minor >= 0) accumulator.assets += item.balance_minor
       else accumulator.liabilities += -item.balance_minor
       return accumulator
@@ -115,12 +115,12 @@ export function AccountsPage() {
     setForm({
       name: account.name,
       type: account.type,
-      initial_balance_minor: account.initial_balance_minor,
+      initial_balance: String(account.initial_balance_minor / 10 ** minorUnits(account.currency)),
       icon: account.icon,
       color: account.color,
       institution: account.institution,
       card_no_tail: account.card_no_tail,
-      credit_limit_minor: account.credit_limit_minor,
+      credit_limit: String(account.credit_limit_minor / 10 ** minorUnits(account.currency)),
       bill_day: account.bill_day,
       due_day: account.due_day,
       include_in_net_worth: account.include_in_net_worth,
@@ -142,13 +142,22 @@ export function AccountsPage() {
       setError(t('ledger.accountNameRequired'))
       return
     }
+    const currency = editing?.currency ?? 'CNY'
+    const balance = parseAmountToMinor(form.initial_balance.trim() || '0', currency)
+    const limit = parseAmountToMinor(form.credit_limit.trim() || '0', currency)
+    if (balance === null || limit === null || !Number.isSafeInteger(balance) || !Number.isSafeInteger(limit) || limit < 0) {
+      setError(t('ledger.amountInvalid'))
+      return
+    }
+    const { initial_balance, credit_limit, ...fields } = form
+    const payload = { ...fields, initial_balance_minor: balance, credit_limit_minor: limit }
     setBusy(true)
     setError(null)
     try {
       if (editing) {
-        await api.updateAccount(editing.id, form)
+        await api.updateAccount(editing.id, payload)
       } else {
-        await api.createAccount(form)
+        await api.createAccount(payload)
       }
       await refresh()
       closeForm()
@@ -433,14 +442,8 @@ export function AccountsPage() {
                 id="account-balance"
                 className="ab-input ab-tnum"
                 inputMode="decimal"
-                value={(form.initial_balance_minor / 100).toString()}
-                onChange={(event) => {
-                  const parsed = Number(event.target.value)
-                  setForm({
-                    ...form,
-                    initial_balance_minor: Number.isFinite(parsed) ? Math.round(parsed * 100) : 0,
-                  })
-                }}
+                value={form.initial_balance}
+                onChange={(event) => setForm({ ...form, initial_balance: event.target.value })}
               />
               <p className="mt-1 text-ab-caption1 text-label-3">{t('ledger.initialBalanceHint')}</p>
             </div>
@@ -482,14 +485,8 @@ export function AccountsPage() {
                 id="account-limit"
                 className="ab-input ab-tnum"
                 inputMode="decimal"
-                value={(form.credit_limit_minor / 100).toString()}
-                onChange={(event) => {
-                  const parsed = Number(event.target.value)
-                  setForm({
-                    ...form,
-                    credit_limit_minor: Number.isFinite(parsed) ? Math.round(parsed * 100) : 0,
-                  })
-                }}
+                value={form.credit_limit}
+                onChange={(event) => setForm({ ...form, credit_limit: event.target.value })}
               />
             </div>
           </div>

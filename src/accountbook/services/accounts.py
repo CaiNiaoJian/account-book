@@ -159,6 +159,14 @@ def update_account(session: Session, account_id: int, **changes: Any) -> Account
         raise ValidationError(f"不支持的账户字段：{sorted(unknown)}", fields=sorted(unknown))
 
     account = get_account(session, account_id)
+    if "currency" in changes and changes["currency"] != account.currency:
+        used = session.scalar(
+            select(Transaction.id)
+            .where((Transaction.account_id == account_id) | (Transaction.to_account_id == account_id))
+            .limit(1)
+        )
+        if used is not None:
+            raise ValidationError("已有流水的账户不能更改币种，请新建对应币种的账户", field="currency")
     if "name" in changes:
         new_name = str(changes["name"] or "").strip()
         if not new_name:
@@ -176,7 +184,8 @@ def update_account(session: Session, account_id: int, **changes: Any) -> Account
     # 起点余额 / 是否计入净值 / 归档都会改变历史净值曲线。
     # 账户数量是个位数，**整体重算**比"精确推导受影响区间"更简单也更不容易错 ——
     # 少算一天的代价是曲线错，多算一天的代价是几十毫秒。
-    daily.mark_dirty_from(session, None)
+    if set(changes) & {"initial_balance_minor", "include_in_net_worth", "currency", "is_archived"}:
+        daily.mark_dirty_from(session, None)
 
     audit.record_diff(
         session,
@@ -224,6 +233,7 @@ def restore_account(session: Session, account_id: int) -> Account:
     _assert_name_available(session, account.name, exclude_id=account.id)
     account.restore()
     session.flush()
+    daily.mark_dirty_from(session, None)
     audit.record(session, entity="account", entity_id=account_id, action="restore")
     return account
 
@@ -324,14 +334,27 @@ def overview(session: Session, *, include_archived: bool = False) -> dict[str, A
     total_positive = 0
     total_negative = 0
     counted = 0
+    totals_by_currency: dict[str, dict[str, Any]] = {}
     for account in accounts:
         balance = balances.get(account.id, account.initial_balance_minor)
         if account.include_in_net_worth:
             counted += 1
-            if balance >= 0:
-                total_positive += balance
-            else:
-                total_negative += balance
+            bucket = totals_by_currency.setdefault(
+                account.currency,
+                {
+                    "currency": account.currency,
+                    "assets_minor": 0,
+                    "liabilities_minor": 0,
+                    "net_worth_minor": 0,
+                },
+            )
+            bucket["net_worth_minor"] += balance
+            bucket["assets_minor" if balance >= 0 else "liabilities_minor"] += abs(balance)
+            if account.currency == DEFAULT_CURRENCY:
+                if balance >= 0:
+                    total_positive += balance
+                else:
+                    total_negative += balance
         items.append(
             {
                 "id": account.id,
@@ -359,4 +382,6 @@ def overview(session: Session, *, include_archived: bool = False) -> dict[str, A
         "net_worth_minor": total_positive + total_negative,
         "account_count": len(items),
         "counted_in_net_worth": counted,
+        "currency": DEFAULT_CURRENCY,
+        "totals_by_currency": list(totals_by_currency.values()),
     }

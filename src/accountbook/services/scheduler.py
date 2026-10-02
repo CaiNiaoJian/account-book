@@ -382,6 +382,15 @@ def due_tasks(session: Session, *, now: datetime | None = None) -> list[Schedule
     return sorted(rows, key=lambda row: (row.next_run_at or moment, -row.priority))
 
 
+def _begin_run_transaction(session: Session) -> None:
+    session.flush()
+    connection = session.connection()
+    # sqlite3 legacy mode does not BEGIN for SELECT/SAVEPOINT. Without this,
+    # releasing a handler's savepoint could commit writes before the caller commits.
+    if not connection.connection.driver_connection.in_transaction:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+
+
 def run_due(
     session: Session,
     *,
@@ -395,6 +404,15 @@ def run_due(
     而一次性补 365 次会在这里卡住好几秒。上限之外只推进时间并记一条
     `skipped`，让用户知道"漏了很多次"。
     """
+    _begin_run_transaction(session)
+    if dry_run:
+        # 处理器可能创建工资、通知和流水，试运行必须回滚整个工作单元。
+        # begin_nested 会先 flush 调用者已有的更改，不会回滚调用者的任务配置。
+        with session.begin_nested() as preview:
+            result = run_due(session, now=now, max_per_task=max_per_task)
+            preview.rollback()
+        result["dry_run"] = True
+        return result
     moment = now or datetime.now()
     results: list[dict[str, Any]] = []
     for task in due_tasks(session, now=moment):
@@ -415,7 +433,8 @@ def run_due(
                     outcome = {"status": "skipped", "summary": f"没有 {task.kind} 的处理器"}
                 else:
                     try:
-                        outcome = handler(session, task, scheduled_at)
+                        with session.begin_nested():
+                            outcome = handler(session, task, scheduled_at)
                     except Exception as error:  # noqa: BLE001 - 单独一次失败不该中断整轮
                         _logger.warning("任务 %s 执行失败：%s", task.code, error)
                         outcome = {"status": "failed", "summary": "", "error": str(error)[:300]}
@@ -486,6 +505,13 @@ def run_task_now(
     用户想手动触发一次发薪流程就做不到（只能等到那天）。
     执行留痕的 `scheduled_at` 用计划时刻，`caught_up` 标出它提前跑了。
     """
+    _begin_run_transaction(session)
+    if dry_run:
+        with session.begin_nested() as preview:
+            result = run_task_now(session, task_id, now=now)
+            preview.rollback()
+        result["dry_run"] = True
+        return result
     moment = now or datetime.now()
     task = get_task(session, task_id)
     scheduled_at = task.next_run_at or moment
@@ -500,7 +526,8 @@ def run_task_now(
             outcome = {"status": "skipped", "summary": f"没有 {task.kind} 的处理器"}
         else:
             try:
-                outcome = handler(session, task, moment)
+                with session.begin_nested():
+                    outcome = handler(session, task, moment)
             except Exception as error:  # noqa: BLE001
                 _logger.warning("任务 %s 手动执行失败：%s", task.code, error)
                 outcome = {"status": "failed", "summary": "", "error": str(error)[:300]}

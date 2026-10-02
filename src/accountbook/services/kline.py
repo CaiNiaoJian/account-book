@@ -267,7 +267,7 @@ def rebuild(session: Session, *, period: str, start: date, end: date) -> int:
         return 0
 
     # 日结缓存先保证新鲜 —— K 线是它的聚合，它不新鲜 K 线一定不对
-    daily_service.ensure_fresh(session, spans[0][0], spans[-1][1])
+    daily_service.ensure_fresh(session, spans[0][0] - timedelta(days=1), spans[-1][1])
 
     # 账本开始之前的周期不生成蜡烛（理由见 _first_record_day）
     first_day = _first_record_day(session)

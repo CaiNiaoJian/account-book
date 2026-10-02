@@ -81,19 +81,22 @@ Write-Ok "版本号一致：$version（PE 资源写作 $(Get-NormalizedVersion $
 
 # ---- 4. PyInstaller --------------------------------------------------------
 Write-Step '运行 PyInstaller'
+# Build outside the installed directory: COLLECT deletes its output directory.
+$staging = Join-Path $repoRoot ('.smoke-test\release-' + [guid]::NewGuid().ToString('N'))
+$stagingDist = Join-Path $staging 'dist'
 Push-Location $repoRoot
 try {
-    & $python -m PyInstaller --noconfirm --clean (Join-Path $scriptDir 'accountbook.spec')
+    & $python -m PyInstaller --noconfirm --clean --distpath $stagingDist (Join-Path $scriptDir 'accountbook.spec')
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller 失败（退出码 $LASTEXITCODE）" }
 }
 finally {
     Pop-Location
 }
 
-$exePath = Join-Path $repoRoot 'dist\AccountBook\AccountBook.exe'
+$exePath = Join-Path $stagingDist 'AccountBook\AccountBook.exe'
 if (-not (Test-Path $exePath)) { throw "未找到打包产物 $exePath" }
 
-$sizeMb = (Get-ChildItem (Join-Path $repoRoot 'dist\AccountBook') -Recurse -File |
+$sizeMb = (Get-ChildItem (Join-Path $stagingDist 'AccountBook') -Recurse -File |
     Measure-Object -Property Length -Sum).Sum / 1MB
 Write-Ok ("打包完成：{0}（目录总大小 {1:N1} MB）" -f $exePath, $sizeMb)
 
@@ -206,3 +209,14 @@ if (-not $NoSmokeTest) {
         Remove-Item -LiteralPath $resolvedSmokeData -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
+
+# Verify the staged application before replacing the installed program.
+. (Join-Path $scriptDir 'publish_backend.ps1')
+Publish-AccountBook -Source (Join-Path $stagingDist 'AccountBook') -Target (Join-Path $repoRoot 'dist\AccountBook') -Workspace $repoRoot
+Write-Ok ('程序已更新，原数据目录已保留：' + (Join-Path $repoRoot 'dist\AccountBook'))
+$allowedStagingRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot '.smoke-test')).TrimEnd('\') + '\'
+$resolvedStaging = [IO.Path]::GetFullPath($staging)
+if (-not $resolvedStaging.StartsWith($allowedStagingRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "拒绝清理测试目录外的路径：$resolvedStaging"
+}
+Remove-Item -LiteralPath $resolvedStaging -Recurse -Force

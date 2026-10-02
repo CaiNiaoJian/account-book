@@ -39,6 +39,7 @@ from .db.bootstrap import bootstrap_database
 from .db.session import Database
 from .logging_setup import install_excepthook, setup_logging
 from .paths import AppPaths, get_paths
+from .services.scheduler_worker import SchedulerWorker
 from .shell.tray import TrayHandle, create_tray
 from .shell.window import BrowserShell, ShellAdapter, create_shell
 
@@ -62,6 +63,7 @@ class _Shutdown:
     tray: TrayHandle | None = None
     #: 数据库连接池 —— 退出前必须 dispose，否则 WAL 文件不能被正确收尾
     database: Database | None = None
+    scheduler: SchedulerWorker | None = None
 
 
 class BackendServer:
@@ -234,6 +236,8 @@ def run() -> int:
         server = BackendServer(ctx, settings)
         shutdown.server = server
         ctx.port = server.start()
+        shutdown.scheduler = SchedulerWorker(ctx)
+        shutdown.scheduler.start()
 
         url = _build_entry_url(ctx, settings)
         _logger.info("界面入口：%s", _mask_token(url))
@@ -302,6 +306,8 @@ def run() -> int:
             shutdown.tray.stop()
         if shutdown.server is not None:
             shutdown.server.stop()
+        if shutdown.scheduler is not None:
+            shutdown.scheduler.stop()
         if shutdown.database is not None:
             # 关闭连接池：让 SQLite 把 WAL 合并回主库并释放文件句柄。
             # 不关的话，便携模式下用户直接拔 U 盘可能留下 -wal/-shm 残留文件。

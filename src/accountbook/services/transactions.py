@@ -412,7 +412,9 @@ def _normalize_fields(
             raise ValidationError("转账必须指定目标账户", field="to_account_id")
         if int(to_account_id) == int(account_id):
             raise ValidationError("转出与转入账户不能相同", field="to_account_id")
-        _require_account(session, int(to_account_id))
+        target = _require_account(session, int(to_account_id))
+        if target.currency != account.currency:
+            raise ValidationError("转账双方必须使用相同币种；暂不支持汇率换算", field="to_account_id")
     elif to_account_id:
         raise ValidationError("只有转账可以指定目标账户", field="to_account_id")
 
@@ -432,6 +434,8 @@ def _normalize_fields(
         occurred_at = _parse_datetime(occurred_at)
 
     currency = str(resolved("currency") or account.currency or DEFAULT_CURRENCY)
+    if currency != account.currency:
+        raise ValidationError("流水币种必须与账户币种一致", field="currency")
 
     normalized: dict[str, Any] = {
         "type": transaction_type,
@@ -586,6 +590,7 @@ def summary(
     作废（``void``）与已删除流水同样排除。
     """
     conditions = [
+        Transaction.currency == DEFAULT_CURRENCY,
         Transaction.deleted_at.is_(None),
         Transaction.status != TransactionStatus.VOID.value,
         Transaction.type.not_in([item.value for item in TRANSFER_TYPES]),
@@ -687,6 +692,7 @@ def daily_totals(
     start_dt = datetime.combine(start, time.min)
     end_dt = datetime.combine(end, time.max)
     conditions = [
+        Transaction.currency == DEFAULT_CURRENCY,
         Transaction.deleted_at.is_(None),
         Transaction.status != TransactionStatus.VOID.value,
         Transaction.occurred_at >= start_dt,

@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
 from ...core.errors import ValidationError
@@ -40,6 +40,7 @@ from ..schemas import (
     WorkdayImportIn,
     WorkdayOverrideIn,
 )
+from ..state import context_of
 
 __all__ = ["router"]
 
@@ -526,17 +527,24 @@ def delete_task(task_id: int, session: Session = SessionDep) -> None:
 @router.post("/scheduler/tasks/{task_id}/run", summary="立即执行某个任务")
 def run_task(
     task_id: int,
+    request: Request,
     dry_run: bool = Query(default=False),
     session: Session = SessionDep,
 ) -> Any:
     """不等计划时刻。有了它，用户才能手动触发一次发薪流程并看到强弹。"""
-    return scheduler_service.run_task_now(session, task_id, dry_run=dry_run)
+    with context_of(request.app).scheduler_lock:
+        result = scheduler_service.run_task_now(session, task_id, dry_run=dry_run)
+        session.commit()
+        return result
 
 
 @router.post("/scheduler/run", summary="执行到期任务")
-def run_tasks(dry_run: bool = Query(default=False), session: Session = SessionDep) -> Any:
+def run_tasks(request: Request, dry_run: bool = Query(default=False), session: Session = SessionDep) -> Any:
     """`dry_run=True` 时只算不写 —— 界面需要能预览"现在点下去会发生什么"。"""
-    return scheduler_service.run_due(session, dry_run=dry_run)
+    with context_of(request.app).scheduler_lock:
+        result = scheduler_service.run_due(session, dry_run=dry_run)
+        session.commit()
+        return result
 
 
 @router.get("/scheduler/history", summary="执行历史")

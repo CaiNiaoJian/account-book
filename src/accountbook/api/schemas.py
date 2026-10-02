@@ -149,6 +149,8 @@ class AccountOverviewOut(BaseModel):
     net_worth_minor: int
     account_count: int
     counted_in_net_worth: int
+    currency: str = "CNY"
+    totals_by_currency: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # -----------------------------------------------------------------------------

@@ -86,6 +86,21 @@ powershell -ExecutionPolicy Bypass -File packaging\build_backend.ps1
 * 目录内包含 `accountbook.db`、`attachments/`、`backups/`、`logs/`、`plugins/`、`models/`、`exports/`、`cache/` 与 `webview/`。
   **这些内容全部被 [.gitignore](.gitignore) 排除**，不会被误提交到版本库。
 
+### 更新会清空账本吗？
+
+正常更新和修复不会重置账本：启动只升级数据库结构，内置账户和分类仅按需补充。
+继续使用原数据目录即可保留流水、账户、附件与设置；切换数据目录会打开另一份账本。
+需要结构升级时，程序会先通过 SQLite 备份完整账本（含 WAL 中已提交的记录），
+存到 `backups/pre-upgrade-*.db`，备份失败则停止升级。
+
+打包脚本在独立目录生成新程序，仅替换 `AccountBook.exe` 与 `_internal`，
+保留程序目录里的 `data`、`portable.flag` 与其他用户文件。
+手动更新便携版时同样保留原 `data` 文件夹和 `portable.flag`。
+
+汇总金额目前以人民币为口径；其他币种的账户保留原币余额，分币种返回总额。
+未配置汇率时不会直接相加不同币种，也不允许跨币种转账。
+定时任务在程序启动时补办到期任务，运行期间每 30 秒检查一次；试运行不会写入业务记录。
+
 ---
 
 ## 隐私与安全

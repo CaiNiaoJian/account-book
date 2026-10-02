@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from ..core.domain import TransactionStatus, TransactionType
+from ..core.money import DEFAULT_CURRENCY
 from ..db.models import Transaction
 
 __all__ = [
@@ -39,7 +40,12 @@ TRANSFER_TYPES: frozenset[str] = frozenset({TransactionType.TRANSFER.value, Tran
 
 
 def load_transactions(
-    session: Session, *, start: date, end: date, types: set[str] | None = None
+    session: Session,
+    *,
+    start: date,
+    end: date,
+    types: set[str] | None = None,
+    currency: str = DEFAULT_CURRENCY,
 ) -> list[Transaction]:
     """取出区间内**参与统计**的流水（已排除作废、软删除与转账）。
 
@@ -50,6 +56,7 @@ def load_transactions(
         select(Transaction)
         .options(selectinload(Transaction.splits))
         .where(
+            Transaction.currency == currency,
             Transaction.deleted_at.is_(None),
             Transaction.status != TransactionStatus.VOID.value,
             Transaction.occurred_at >= datetime.combine(start, time.min),
@@ -82,7 +89,14 @@ def category_totals(
     return sorted(totals.items(), key=lambda item: item[1], reverse=True)
 
 
-def expense_total(session: Session, *, start: date, end: date, category_ids: set[int] | None = None) -> int:
+def expense_total(
+    session: Session,
+    *,
+    start: date,
+    end: date,
+    category_ids: set[int] | None = None,
+    currency: str = DEFAULT_CURRENCY,
+) -> int:
     """区间内的支出总额；给出 ``category_ids`` 时只统计这些分类（同样分账优先）。
 
     预算用它算"已用多少"。注意**不能**简单地对 ``category_totals`` 求和后
@@ -90,12 +104,14 @@ def expense_total(session: Session, *, start: date, end: date, category_ids: set
     """
     if category_ids is None:
         total = 0
-        for transaction in load_transactions(session, start=start, end=end, types={"expense"}):
+        for transaction in load_transactions(
+            session, start=start, end=end, types={"expense"}, currency=currency
+        ):
             total += transaction.amount_minor
         return total
 
     total = 0
-    for transaction in load_transactions(session, start=start, end=end, types={"expense"}):
+    for transaction in load_transactions(session, start=start, end=end, types={"expense"}, currency=currency):
         if transaction.splits:
             total += sum(
                 split.amount_minor for split in transaction.splits if split.category_id in category_ids

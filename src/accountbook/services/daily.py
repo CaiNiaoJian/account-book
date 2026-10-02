@@ -35,11 +35,12 @@ from datetime import date, datetime, time, timedelta
 from statistics import median
 from typing import Any, Literal
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import Session
 
 from ..core.domain import TRANSFER_TYPES, TransactionStatus, TransactionType
-from ..db.base import local_now, utc_now
+from ..core.money import DEFAULT_CURRENCY
+from ..db.base import utc_now
 from ..db.models import (
     Account,
     AppSetting,
@@ -71,12 +72,15 @@ _logger = logging.getLogger(__name__)
 
 #: 脏标记的"全脏"起点。比任何真实流水都早。
 _EPOCH = date(1970, 1, 1)
+_STALE_COMPUTED_AT = datetime(1970, 1, 1)
 
 #: 异常分数回看的周数（同星期基线）
 _ANOMALY_LOOKBACK_WEEKS = 8
 
 #: 脏标记在 ``app_settings`` 中的键
 _DIRTY_KEY = "daily_stats_dirty_from"
+_FORMULA_KEY = "daily_stats_formula_version"
+_FORMULA_VERSION = 2
 
 #: 日历颜色主指标（REQ-20 的六类）
 CALENDAR_METRICS: tuple[str, ...] = (
@@ -172,7 +176,11 @@ def recompute_range(session: Session, start: date, end: date) -> int:
     attachment_days = _attachment_days(session, start, end)
 
     balances = dict(opening)
-    counted = [account for account in accounts if account.include_in_net_worth]
+    counted = [
+        account
+        for account in accounts
+        if account.include_in_net_worth and account.currency == DEFAULT_CURRENCY
+    ]
     net_worth = sum(opening.get(account.id, 0) for account in counted)
 
     recomputed = 0
@@ -230,31 +238,42 @@ def recompute_range(session: Session, start: date, end: date) -> int:
 
 
 def ensure_fresh(session: Session, start: date, end: date) -> None:
-    """确保 ``[start, end]`` 的日结可用（脏则重算）。
+    """Mark affected caches stale, then recompute only the requested days.
 
-    区间右端会**延伸到今天**：净值是累计量，只重算历史区间会让今天的余额停在旧值。
+    Opening balances come from transactions, so intermediate days need not be materialized.
+    Stale rows outside this window remain marked until their next read.
     """
-    today = local_now().date()
+    if end < start:
+        return
+    formula = session.get(AppSetting, _FORMULA_KEY)
+    if formula is None or formula.value.get("version") != _FORMULA_VERSION:
+        if formula is None:
+            session.add(AppSetting(key=_FORMULA_KEY, value={"version": _FORMULA_VERSION}))
+        else:
+            formula.value = {"version": _FORMULA_VERSION}
+        invalidate_all(session)
     dirty = _read_dirty(session)
+    if dirty is not None:
+        session.execute(
+            update(DailyStat).where(DailyStat.date >= dirty).values(computed_at=_STALE_COMPUTED_AT)
+        )
+        from . import kline as kline_service
 
-    if dirty is None:
-        # 没有脏标记时，还要确认区间内确实已有缓存（首次运行 / 刚升级过）
-        covered_end = min(end, today)
-        if covered_end >= start:
-            have = int(
-                session.scalar(
-                    select(func.count(DailyStat.date)).where(DailyStat.date.between(start, covered_end))
-                )
-                or 0
+        kline_service.invalidate(session, dirty, date.max)
+        _write_dirty(session, None)
+    have = (
+        session.scalar(
+            select(func.count(DailyStat.date)).where(
+                DailyStat.date.between(start, end), DailyStat.computed_at > _STALE_COMPUTED_AT
             )
-            if have >= (covered_end - start).days + 1:
-                return
-
-    recompute_start = min(dirty, start) if dirty is not None else start
-    days = recompute_range(session, recompute_start, max(end, today))
-    _write_dirty(session, None)
+        )
+        or 0
+    )
+    if have == (end - start).days + 1:
+        return
+    days = recompute_range(session, start, end)
     if days:
-        _logger.debug("日结重算：%s → %s（%s 天）", recompute_start, max(end, today), days)
+        _logger.debug("日结重算：%s → %s（%s 天）", start, end, days)
 
 
 # -----------------------------------------------------------------------------
@@ -751,6 +770,7 @@ def _daily_flows(session: Session, start: date, end: date) -> dict[date, dict[st
             Transaction.account_id,
             Transaction.type,
             Transaction.direction,
+            Transaction.currency,
             func.sum(Transaction.amount_minor).label("total"),
             func.count(Transaction.id).label("count"),
         )
@@ -765,6 +785,7 @@ def _daily_flows(session: Session, start: date, end: date) -> dict[date, dict[st
             Transaction.account_id,
             Transaction.type,
             Transaction.direction,
+            Transaction.currency,
         )
     ).all()
 
@@ -791,11 +812,11 @@ def _daily_flows(session: Session, start: date, end: date) -> dict[date, dict[st
         amount = int(row.total or 0)
         bucket["tx_count"] += int(row.count or 0)
 
-        if row.type == TransactionType.INCOME.value:
+        if row.currency == DEFAULT_CURRENCY and row.type == TransactionType.INCOME.value:
             bucket["income"] += amount
-        elif row.type == TransactionType.EXPENSE.value:
+        elif row.currency == DEFAULT_CURRENCY and row.type == TransactionType.EXPENSE.value:
             bucket["expense"] += amount
-        if row.type in transfer_types:
+        if row.currency == DEFAULT_CURRENCY and row.type in transfer_types:
             if row.direction == "in":
                 bucket["transfer_in"] += amount
             else:
@@ -871,6 +892,7 @@ def _top_categories(session: Session, start: date, end: date) -> dict[date, int 
     """每天支出最多的分类（分账优先）。"""
     starts, ends = datetime.combine(start, time.min), datetime.combine(end, time.max)
     common = (
+        Transaction.currency == DEFAULT_CURRENCY,
         Transaction.deleted_at.is_(None),
         Transaction.status != TransactionStatus.VOID.value,
         Transaction.type == TransactionType.EXPENSE.value,
@@ -943,11 +965,20 @@ def _anomaly_score(day: date, flows: dict[date, dict[str, Any]]) -> float:
 
 def _net_worth_at(session: Session, day: date) -> int:
     row = session.get(DailyStat, day)
-    if row is not None:
+    dirty = _read_dirty(session)
+    if (
+        row is not None
+        and row.computed_at.replace(tzinfo=None) > _STALE_COMPUTED_AT
+        and (dirty is None or dirty > day)
+    ):
         return row.net_worth_minor
     accounts = _active_accounts(session)
     balances = _balances_before(session, accounts, day + timedelta(days=1))
-    return sum(balances.get(account.id, 0) for account in accounts if account.include_in_net_worth)
+    return sum(
+        balances.get(account.id, 0)
+        for account in accounts
+        if account.include_in_net_worth and account.currency == DEFAULT_CURRENCY
+    )
 
 
 def _net_worth_delta(transaction: Transaction) -> int:
@@ -956,7 +987,9 @@ def _net_worth_delta(transaction: Transaction) -> int:
     转账与校准不改变总净值（钱只是换个口袋），因此贡献为 0 ——
     否则日内曲线会因为一次账户间划转而出现虚假的尖峰。
     """
-    if transaction.type in {item.value for item in TRANSFER_TYPES}:
+    if transaction.currency != DEFAULT_CURRENCY or transaction.type in {
+        item.value for item in TRANSFER_TYPES
+    }:
         return 0
     return transaction.amount_minor if transaction.direction == "in" else -transaction.amount_minor
 
@@ -964,7 +997,7 @@ def _net_worth_delta(transaction: Transaction) -> int:
 def _day_composition(transactions: list[Transaction]) -> list[tuple[int | None, int]]:
     totals: dict[int | None, int] = defaultdict(int)
     for transaction in transactions:
-        if transaction.type != TransactionType.EXPENSE.value:
+        if transaction.currency != DEFAULT_CURRENCY or transaction.type != TransactionType.EXPENSE.value:
             continue
         if transaction.splits:
             for split in transaction.splits:
@@ -979,6 +1012,7 @@ def _same_weekday_average(session: Session, day: date) -> int:
     rows = session.execute(
         select(func.date(Transaction.occurred_at), func.sum(Transaction.amount_minor))
         .where(
+            Transaction.currency == DEFAULT_CURRENCY,
             Transaction.deleted_at.is_(None),
             Transaction.status != TransactionStatus.VOID.value,
             Transaction.type == TransactionType.EXPENSE.value,

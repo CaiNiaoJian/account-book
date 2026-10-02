@@ -45,6 +45,8 @@ dependencies = [
     "uvicorn>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
     "httpx>=0.27",                    # 启动自检与 AI 调用的统一 HTTP 客户端
     "pywebview==6.2.1; sys_platform == 'win32'", # CoreCLR 适配与同版本官方 WebView2 SDK 配套
     "pythonnet>=3.0; sys_platform == 'win32'",

@@ -108,7 +108,9 @@ def _spend(session: Session, budget: Budget, start: date, end: date) -> int:
         if budget.scope == BudgetScope.CATEGORY.value and budget.category_id is not None
         else None
     )
-    return aggregate.expense_total(session, start=start, end=end, category_ids=category_ids)
+    return aggregate.expense_total(
+        session, start=start, end=end, category_ids=category_ids, currency=budget.currency
+    )
 
 
 def budget_status(session: Session, budget: Budget, *, on: date | None = None) -> dict[str, Any]:

@@ -75,6 +75,7 @@ class AppContext:
 
     #: 后端线程退出信号。uvicorn 通过它优雅停机。
     shutdown_event: threading.Event = field(default_factory=threading.Event)
+    scheduler_lock: Any = field(default_factory=threading.RLock)
 
     @property
     def origin_whitelist(self) -> frozenset[str]:

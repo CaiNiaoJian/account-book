@@ -12,10 +12,12 @@
  */
 
 import { motion } from 'framer-motion'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { Icon } from '@/components/Icon'
 import { IconButton, Segmented } from '@/components/ui'
+import { useLedger } from '@/features/ledger/store'
 import { useI18n, LANGUAGES, LANGUAGE_LABELS } from '@/i18n'
 import type { LanguageCode, ThemePreference } from '@/lib/boot'
 import { ALL_NAV_ITEMS, isImplemented } from './navigation'
@@ -32,6 +34,16 @@ export function TopBar({ title, phase, collapsed, onToggleCollapse }: TopBarProp
   const { t, language } = useI18n()
   const { preferences, update, saving, syncError } = usePreferences()
   const navigate = useNavigate()
+  const { allAccounts } = useLedger()
+  const [refreshing, setRefreshing] = useState(false)
+
+  const refreshPage = () => {
+    if (refreshing) return
+    setRefreshing(true)
+    // 整页重新加载会重试页面请求和全局账本字典，保留当前 URL 与会话。
+    // 仅刷新账本 Context 无法恢复各页面独立维护的加载失败状态。
+    window.location.reload()
+  }
 
   const themeOptions: { value: ThemePreference; label: string; icon: 'sun' | 'moon' | 'monitor'; title: string }[] = [
     { value: 'light', label: '', icon: 'sun', title: t('topbar.themeLight') },
@@ -66,6 +78,11 @@ export function TopBar({ title, phase, collapsed, onToggleCollapse }: TopBarProp
       <div className="ml-0.5 flex min-w-0 items-baseline gap-2">
         <h1 className="truncate text-ab-title3 text-label">{title}</h1>
         {phase !== 'P0' ? <span className="ab-phase-badge">{phase}</span> : null}
+        {allAccounts.some((account) => account.currency !== 'CNY') ? (
+          <span className="shrink-0 text-ab-caption text-label-3" title={t('topbar.currencyHint')}>
+            {t('topbar.currencySummary')}
+          </span>
+        ) : null}
       </div>
 
       <div className="flex-1" />
@@ -105,6 +122,22 @@ export function TopBar({ title, phase, collapsed, onToggleCollapse }: TopBarProp
         onChange={(value) => void update({ language: value })}
         size="sm"
       />
+
+      <button
+        type="button"
+        className="ab-btn-secondary ml-1 shrink-0 whitespace-nowrap"
+        title={t('topbar.refreshHint')}
+        disabled={refreshing || saving}
+        aria-busy={refreshing}
+        onClick={refreshPage}
+      >
+        <Icon
+          name="refresh"
+          size={15}
+          className={refreshing && !preferences.reduce_motion ? 'animate-spin' : undefined}
+        />
+        {t(refreshing ? 'topbar.refreshing' : 'topbar.refresh')}
+      </button>
 
       {/* ---- 主操作：记一笔 ------------------------------------------------
           尚未实现的阶段**不**把它画成一个醒目的可用按钮 —— 那会误导用户。

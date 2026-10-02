@@ -11,11 +11,17 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
+from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
+from sqlalchemy import inspect
 
 if TYPE_CHECKING:
     from ..session import Database
@@ -57,6 +63,16 @@ def run_migrations(database: Database) -> str:
     """
     config = _build_config(database)
     _logger.info("检查数据库结构版本：%s", database.path)
+    before = current_revision(database)
+    head = ScriptDirectory.from_config(config).get_current_head()
+    if before != head and inspect(database.engine).get_table_names():
+        # SQLite backup includes committed WAL pages; copying the .db alone can lose records.
+        backup_dir = database.path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup = backup_dir / (f"pre-upgrade-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:8]}.db")
+        with closing(sqlite3.connect(database.path)) as source, closing(sqlite3.connect(backup)) as target:
+            source.backup(target)
+        _logger.info("结构升级前账本备份：%s", backup)
     command.upgrade(config, "head")
     revision = current_revision(database)
     _logger.info("数据库结构已是最新：revision=%s", revision or "<empty>")

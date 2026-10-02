@@ -235,6 +235,8 @@ export interface AccountOverview {
   net_worth_minor: number
   account_count: number
   counted_in_net_worth: number
+  currency: string
+  totals_by_currency: { currency: string; assets_minor: number; liabilities_minor: number; net_worth_minor: number }[]
 }
 
 export interface Category {

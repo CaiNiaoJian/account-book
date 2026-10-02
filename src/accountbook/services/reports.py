@@ -435,7 +435,11 @@ def _section_breakdown(session: Session, start: date, end: date) -> dict[str, An
 
 def _section_accounts(session: Session, start: date, end: date) -> dict[str, Any]:
     """账户与卡片变动。复用台账服务 —— 它就是为"算清一个账户"而写的。"""
-    accounts = list(session.scalars(select(Account).where(Account.deleted_at.is_(None))).all())
+    accounts = list(
+        session.scalars(
+            select(Account).where(Account.deleted_at.is_(None), Account.currency == DEFAULT_CURRENCY)
+        ).all()
+    )
     rows: list[dict[str, Any]] = []
     for account in accounts:
         opening = ledger_service.opening_balance(session, account.id, start)
@@ -484,6 +488,7 @@ def _section_accounts(session: Session, start: date, end: date) -> dict[str, Any
                 "口径：期初 = 账户起点余额 + 起始日之前的全部流水；"
                 "期末 = 截至区间末的余额。与台账页用的是同一套算法，"
                 "因此这里的数字和台账对得上。"
+                "本节仅汇总人民币账户；其他币种请查看各账户台账，未做汇率换算。"
             ),
         ],
     }
