@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -15,11 +16,25 @@ from accountbook.paths import (
     DATA_SUBDIRS,
     PORTABLE_FLAG_NAME,
     AppPaths,
+    _probe_writable,
     data_dir_candidates,
     get_paths,
     is_frozen,
     reset_paths_cache,
 )
+
+
+def test_write_probe_does_not_retry_access_denied(tmp_path: Path) -> None:
+    with patch.object(Path, "open", side_effect=PermissionError("access denied")) as opening:
+        writable, reason = _probe_writable(tmp_path)
+    assert not writable
+    assert "PermissionError" in reason
+    assert opening.call_count == 1
+
+
+def test_write_probe_leaves_no_files(tmp_path: Path) -> None:
+    assert _probe_writable(tmp_path)[0]
+    assert list(tmp_path.iterdir()) == []
 
 
 class TestDataDirResolution:

@@ -260,18 +260,21 @@ def _requires_token(path: str) -> bool:
 
 
 def _extract_token(request: Request) -> str | None:
-    """按优先级从 请求头 → Cookie → 查询参数 提取令牌。"""
+    """请求头 → 启动链接 → Cookie。旧进程 Cookie 不能遮住本次启动的令牌。
+
+    Cookie 不按端口隔离，原生窗口与浏览器重启时都会携带旧会话。
+    启动链接通过后守卫会写入新 Cookie，后续请求沿用正常 Cookie 鉴权。
+    """
     auth = request.headers.get("authorization")
     if auth and auth.lower().startswith("bearer "):
         return auth[7:].strip() or None
 
-    cookie = request.cookies.get(COOKIE_NAME)
-    if cookie:
-        return cookie
-
     query_token = request.query_params.get("token")
     if query_token:
         return query_token
+    cookie = request.cookies.get(COOKIE_NAME)
+    if cookie:
+        return cookie
     return None
 
 
@@ -347,6 +350,9 @@ def _serve_static_or_index(request: Request, full_path: str) -> Response:
             candidate = resolved
 
     if candidate is None:
+        if Path(full_path).suffix:
+            # 匿名静态资源请求不能回退到注入了会话令牌的首页。
+            return Response(status_code=404)
         return _render_index(ctx)
 
     return _file_response(candidate)

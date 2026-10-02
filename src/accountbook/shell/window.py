@@ -82,13 +82,17 @@ class WebViewShell(ShellAdapter):
 
     kind = "pywebview"
 
-    def __init__(self, ctx: AppContext, settings: RuntimeSettings, url: str) -> None:
+    def __init__(self, ctx: AppContext, settings: RuntimeSettings, url: str, *, hidden: bool = False) -> None:
         super().__init__(ctx, settings, url)
         self._closing_saved = False
+        self._hidden = hidden
 
     # ---- 生命周期 -----------------------------------------------------------
     def start(self) -> None:
         """创建窗口并进入 GUI 事件循环（本方法会阻塞到窗口关闭）。"""
+        from .webview_runtime import prepare_webview
+
+        prepare_webview(self.ctx.paths.resources)
         self._warm_up_clr()
 
         import webview  # 延迟导入：让不需要外壳的场景（测试、纯 API）避免加载 CLR
@@ -117,6 +121,7 @@ class WebViewShell(ShellAdapter):
             easy_drag=False,  # 使用原生边框，不需要"拖动整个客户区"
             frameless=False,  # 保留原生边框：贴靠、缩放、多屏移动行为最可靠
             vibrancy=False,  # Windows 上不支持 macOS 的 vibrancy
+            hidden=self._hidden,
         )
 
         assert self._window is not None

@@ -101,11 +101,8 @@ Write-Ok ("打包完成：{0}（目录总大小 {1:N1} MB）" -f $exePath, $size
 # 目的：确认打包产物**真的能启动并服务**，而不是只确认文件存在。
 #
 # 两个必须注意的实现细节（都是踩过的坑）：
-#   1. **不要用 `-WindowStyle Hidden` + 轮询 `$proc.HasExited`**：
-#      GUI 子系统程序的进程对象状态在此组合下不可靠，会把"正常运行"
-#      误判为"已退出"。
-#      改为重定向 stdout/stderr 到文件 + `WaitForExit(超时)`
-#      —— 这既避免了误判，也顺带把启动输出留存下来便于排查。
+#   1. 后台验证进程使用 Hidden 并重定向输出，避免打扰用户。
+#      原生窗口验证由 --smoke-native 创建隐藏窗口、报告结果并自行退出。
 #   2. **匹配模式只用 ASCII**：日志是 UTF-8 无 BOM，而 Windows PowerShell 5.1
 #      默认按 ANSI 读取无 BOM 文件，用中文做 `Select-String` 模式会静默匹配失败。
 #      因此这里只匹配 `http://127.0.0.1:<port>` 这类纯 ASCII 片段。
@@ -125,8 +122,8 @@ if (-not $NoSmokeTest) {
     $logFile = Join-Path $smokeData 'logs\accountbook.log'
 
     $proc = Start-Process -FilePath $exePath `
-        -ArgumentList @('--serve-only', '--data-dir', $smokeData) `
-        -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+        -ArgumentList @('--serve-only', '--data-dir', ('"{0}"' -f $smokeData)) `
+        -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
 
     try {
         # 等待日志里出现监听地址（最多 45 秒）
@@ -166,11 +163,46 @@ if (-not $NoSmokeTest) {
         }
 
         Write-Ok "冒烟测试通过：health=$($health.status) version=$($health.version) 首页无令牌状态码=$indexStatus"
+
+        Write-Step '原生窗口验证：检查首次启动与旧会话重启'
+        $nativeData = Join-Path $smokeData 'native'
+        foreach ($nativeAttempt in 1..2) {
+            $nativeReport = Join-Path $nativeData 'cache\native-smoke.json'
+            # 第二次保留 WebView Cookie 和运行时缓存，仅移除上一份验证报告。
+            if (Test-Path $nativeReport) { Remove-Item -LiteralPath $nativeReport -Force }
+            $nativeProc = Start-Process -FilePath $exePath `
+                -ArgumentList @('--smoke-native', '--data-dir', ('"{0}"' -f $nativeData)) `
+                -WindowStyle Hidden -PassThru `
+                -RedirectStandardOutput (Join-Path $smokeData "native-$nativeAttempt-stdout.txt") `
+                -RedirectStandardError (Join-Path $smokeData "native-$nativeAttempt-stderr.txt")
+            try {
+                $nativeDeadline = (Get-Date).AddSeconds(90)
+                while (-not $nativeProc.WaitForExit(1000)) {
+                    if ((Get-Date) -gt $nativeDeadline) { throw '原生窗口验证超时（90 秒）' }
+                }
+                $nativeProc.Refresh()
+                if (-not (Test-Path $nativeReport)) { throw '原生窗口未生成验证结果，请查看测试日志' }
+                $nativeResult = Get-Content -LiteralPath $nativeReport -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($nativeProc.ExitCode -ne 0 -or -not $nativeResult.ok) {
+                    throw "原生窗口验证失败：$($nativeResult | ConvertTo-Json -Compress -Depth 4)"
+                }
+                Write-Ok "原生窗口第 $nativeAttempt 次启动验证通过：renderer=$($nativeResult.renderer) API=$($nativeResult.api_status)"
+            }
+            finally {
+                $nativeProc.Refresh()
+                if (-not $nativeProc.HasExited) { $nativeProc | Stop-Process -Force -ErrorAction SilentlyContinue }
+            }
+        }
     }
     finally {
         $proc.Refresh()
         if (-not $proc.HasExited) { $proc | Stop-Process -Force -ErrorAction SilentlyContinue }
         Start-Sleep -Milliseconds 500
-        Remove-Item -LiteralPath $smokeData -Recurse -Force -ErrorAction SilentlyContinue
+        $resolvedSmokeRoot = [System.IO.Path]::GetFullPath($smokeRoot).TrimEnd('\') + '\'
+        $resolvedSmokeData = [System.IO.Path]::GetFullPath($smokeData)
+        if (-not $resolvedSmokeData.StartsWith($resolvedSmokeRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "拒绝清理测试目录外的路径：$resolvedSmokeData"
+        }
+        Remove-Item -LiteralPath $resolvedSmokeData -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

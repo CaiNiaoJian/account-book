@@ -33,6 +33,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from . import APP_ID
 
@@ -133,9 +134,13 @@ def _probe_writable(directory: Path) -> tuple[bool, str]:
     except OSError as exc:
         return False, f"无法创建目录（{exc.__class__.__name__}: {exc}）"
 
+    # tempfile 在 Windows 遇到访问拒绝时会反复尝试随机文件名，导致启动长时间卡住。
+    # 使用一个独占创建的探针即可确认权限，失败即返回。
+    probe = directory / f".ab_write_probe_{uuid4().hex}"
     try:
-        with tempfile.NamedTemporaryFile(dir=directory, prefix=".ab_write_probe_", delete=True):
+        with probe.open("xb"):
             pass
+        probe.unlink()
     except OSError as exc:
         return False, f"目录存在但不可写入（{exc.__class__.__name__}: {exc}）"
     return True, "可写"

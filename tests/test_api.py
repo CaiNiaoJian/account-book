@@ -43,6 +43,27 @@ class TestHealth:
 # 访问守卫
 # -----------------------------------------------------------------------------
 class TestAccessGuard:
+    def test_restart_entry_replaces_stale_cookie(self, client: tuple[TestClient, Any]) -> None:
+        test_client, ctx = client
+        test_client.cookies.set("ab_session", "previous-process-token")
+        response = test_client.get(f"/?token={ctx.token.value}")
+        assert response.status_code == 200
+        assert response.cookies.get("ab_session") == ctx.token.value
+        assert test_client.get("/api/system/info").status_code == 200
+
+    def test_invalid_entry_does_not_reuse_valid_cookie(self, authed_client: tuple[TestClient, Any]) -> None:
+        test_client, _ = authed_client
+        response = test_client.get("/?token=wrong-process-token")
+        assert response.status_code == 401
+        assert "ab_session" not in response.cookies
+
+    def test_explicit_bearer_keeps_priority(self, client: tuple[TestClient, Any]) -> None:
+        test_client, ctx = client
+        response = test_client.get(
+            f"/?token={ctx.token.value}", headers={"Authorization": "Bearer wrong-token"},
+        )
+        assert response.status_code == 401
+
     def test_api_without_token_is_rejected(self, client: tuple[TestClient, Any]) -> None:
         test_client, _ = client
         response = test_client.get("/api/system/info")
@@ -203,6 +224,16 @@ class TestPreferences:
 # 前端托管
 # -----------------------------------------------------------------------------
 class TestFrontendHosting:
+    @pytest.mark.parametrize("suffix", ["js", "css", "png", "svg"])
+    def test_missing_asset_does_not_return_session_html(
+        self, client: tuple[TestClient, Any], suffix: str,
+    ) -> None:
+        test_client, ctx = client
+        response = test_client.get(f"/assets/missing.{suffix}")
+        assert response.status_code == 404
+        assert ctx.token.value not in response.text
+        assert "__AB_BOOT__" not in response.text
+
     def test_index_requires_token(self, client: tuple[TestClient, Any]) -> None:
         """页面入口含注入的令牌，因此必须受保护。"""
         test_client, _ = client

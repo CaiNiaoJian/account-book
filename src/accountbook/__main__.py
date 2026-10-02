@@ -72,6 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["netfx", "coreclr"],
         help=argparse.SUPPRESS,
     )
+    parser.add_argument("--smoke-native", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--print-paths",
         action="store_true",
@@ -182,11 +183,30 @@ def _main(argv: list[str] | None) -> int:
     if args.probe_clr:
         os.environ["PYTHONNET_RUNTIME"] = args.probe_clr
         try:
-            import clr  # noqa: F401
+            from .paths import resource_root
+            from .shell.clr_runtime import _apply_runtime_env
+            from .shell.webview_runtime import prepare_webview
+
+            resources = resource_root()
+            _apply_runtime_env(args.probe_clr, resources)
+            prepare_webview(resources)
+            import webview.platforms.winforms as backend
+
+            if backend.renderer != "edgechromium":
+                return 4
 
             return 0
-        except Exception:  # noqa: BLE001 - 探测失败就是结论本身
+        except Exception as exc:  # noqa: BLE001 - 探测失败就是结论本身
+            if sys.stderr is not None:
+                print(f"WebView2 backend probe failed: {exc}", file=sys.stderr)
             return 4
+
+    if args.smoke_native:
+        if not args.data_dir:
+            parser.error("--smoke-native requires an isolated --data-dir")
+        from .shell.native_smoke import run_native_smoke
+
+        return run_native_smoke()
 
     # ---- 不启动界面的诊断分支 ----------------------------------------------
     if args.print_paths:

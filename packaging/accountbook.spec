@@ -20,6 +20,8 @@
 # =============================================================================
 
 from pathlib import Path
+from importlib.util import find_spec
+from importlib.metadata import version
 import os
 
 # SPECPATH 由 PyInstaller 注入，指向本文件所在目录（packaging/）
@@ -29,6 +31,14 @@ RESOURCES = SRC / 'accountbook' / 'resources'
 ENTRY = ROOT / 'packaging' / 'entry.py'
 ICON = RESOURCES / 'icons' / 'app.ico'
 VERSION_FILE = ROOT / 'packaging' / 'version_info.txt'
+
+# CoreCLR 使用公开文件夹选择器适配上游后端，冻结后也需要原始源码。
+webview_spec = find_spec('webview')
+if webview_spec is None or webview_spec.origin is None:
+    raise RuntimeError('缺少 pywebview，无法构建原生窗口')
+WEBVIEW_ROOT = Path(webview_spec.origin).parent
+if version('pywebview') != '6.2.1':
+    raise RuntimeError('CoreCLR 适配要求 pywebview 6.2.1；升级依赖时需一起验证窗口后端')
 
 # 诊断开关：windowed（console=False）构建里 stdout 不可见，
 # 一旦启动阶段出问题会弹出一个需要人工点击的错误框，在自动化环境里表现为"卡死"。
@@ -108,6 +118,9 @@ a = Analysis(
     #      将来新增迁移时无需改这里（整个目录一起打包）。
     datas=[
         (str(RESOURCES), 'accountbook_resources'),
+        (str(WEBVIEW_ROOT / 'platforms' / 'winforms.py'), 'accountbook_resources/clr/pywebview'),
+        (str(WEBVIEW_ROOT.parent / 'pywebview-6.2.1.dist-info' / 'licenses' / 'LICENSE'),
+         'accountbook_resources/clr/pywebview'),
         (str(SRC / 'accountbook' / 'db' / 'migrations'), 'accountbook/db/migrations'),
     ],
     hiddenimports=hidden_imports,

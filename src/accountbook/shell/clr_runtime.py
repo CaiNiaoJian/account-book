@@ -9,7 +9,8 @@ pythonnet 默认选择 **.NET Framework（netfx）**，但在部分机器上会�
 
 同一个 ``Python.Runtime.dll`` 在 **.NET Core（coreclr）** 宿主下工作正常，
 说明这是 netfx 加载路径的兼容性问题，不是缺少组件。
-本项目在开发机上实测：netfx 失败、coreclr（.NET 7）成功。
+CoreCLR 还必须使用匹配的 WebView2 组件，因此探测需实际加载窗口后端，
+不能仅凭 import clr 成功就缓存为可用。
 
 为什么不能简单地固定用 coreclr
 ------------------------------
@@ -72,13 +73,16 @@ RUNTIMECONFIG_FILENAME = "python.runtimeconfig.json"
 #: 环境变量名（由 pythonnet 读取，不是我们发明的约定）
 _CORECLR_RUNTIME_CONFIG_ENV = "PYTHONNET_CORECLR_RUNTIME_CONFIG"
 
+# 旧缓存只证明 import clr 成功，不能证明窗口组件兼容，必须重新探测。
+_CACHE_SCHEMA = 2
+
 
 def coreclr_runtime_config(paths: AppPaths) -> Path:
     """返回随包的 CoreCLR 宿主配置文件路径。"""
     return paths.resources / "clr" / RUNTIMECONFIG_FILENAME
 
 
-def _apply_runtime_env(runtime: str, paths: AppPaths) -> None:
+def _apply_runtime_env(runtime: str, resources: Path) -> None:
     """把候选运行时写入环境变量，供探测子进程与当前进程共用。
 
     只设置、不校验：真正的结论由探测的退出码给出。
@@ -89,7 +93,7 @@ def _apply_runtime_env(runtime: str, paths: AppPaths) -> None:
     # 用户显式指定过就尊重用户（便于高级排障），否则用随包配置
     if os.environ.get(_CORECLR_RUNTIME_CONFIG_ENV):
         return
-    config = coreclr_runtime_config(paths)
+    config = resources / "clr" / RUNTIMECONFIG_FILENAME
     if config.exists():
         os.environ[_CORECLR_RUNTIME_CONFIG_ENV] = str(config)
     else:  # pragma: no cover - 仅在资源被误删时发生
@@ -101,12 +105,11 @@ def _probe_command(runtime: str) -> list[str]:
 
     * 打包运行：调用自身 exe 的 ``--probe-clr`` 分支（windowed 程序无 stdout，
       因此只看退出码）；
-    * 源码运行：直接让解释器 import clr，避免多绕一层。
+    * 源码运行：使用同一入口，验证 WebView2 窗口后端而非仅验证 CLR。
     """
     if is_frozen():
         return [sys.executable, PROBE_FLAG, runtime]
-    code = f"import os; os.environ['PYTHONNET_RUNTIME']={runtime!r}; import clr"
-    return [sys.executable, "-c", code]
+    return [sys.executable, "-m", "accountbook", PROBE_FLAG, runtime]
 
 
 def _probe(runtime: str) -> tuple[bool, str]:
@@ -126,6 +129,7 @@ def _probe(runtime: str) -> tuple[bool, str]:
             check=False,
             # 打包产物是 GUI 程序：不要弹出控制台窗口
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
         )
     except (OSError, subprocess.SubprocessError) as exc:
         _logger.debug("CLR 运行时 %s 探测失败（无法执行）：%s", runtime, exc)
@@ -148,6 +152,8 @@ def _load_cache(path: Path) -> str | None:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(payload, dict) or payload.get("schema") != _CACHE_SCHEMA:
+        return None
     runtime = payload.get("clr_runtime")
     return runtime if isinstance(runtime, str) and runtime in CANDIDATE_RUNTIMES else None
 
@@ -158,7 +164,8 @@ def _save_cache(path: Path, runtime: str | None) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(
-                {"clr_runtime": runtime, "probed_by": "shell.clr_runtime"}, ensure_ascii=False, indent=2
+                {"schema": _CACHE_SCHEMA, "clr_runtime": runtime, "probed_by": "webview-backend"},
+                ensure_ascii=False, indent=2,
             ),
             encoding="utf-8",
         )
@@ -178,14 +185,14 @@ def resolve_clr_runtime(paths: AppPaths) -> str | None:
     if explicit:
         _logger.info("使用环境变量指定的 CLR 运行时：%s", explicit)
         # 仍需补上 CoreCLR 宿主配置，否则用户手设 coreclr 时会缺 WinForms
-        _apply_runtime_env(explicit, paths)
+        _apply_runtime_env(explicit, paths.resources)
         return explicit
 
     cache_file = paths.runtime_cache_file
     cached = _load_cache(cache_file)
     if cached:
         _logger.debug("使用缓存的 CLR 运行时：%s", cached)
-        _apply_runtime_env(cached, paths)
+        _apply_runtime_env(cached, paths.resources)
         return cached
 
     _logger.info("首次启动：探测可用的 CLR 运行时（候选：%s）", ", ".join(CANDIDATE_RUNTIMES))
@@ -193,7 +200,7 @@ def resolve_clr_runtime(paths: AppPaths) -> str | None:
     for runtime in CANDIDATE_RUNTIMES:
         # 环境变量必须**在探测之前**设置好：探测子进程通过继承环境变量获得同样的配置，
         # 只有这样才能保证"探测通过的组合"与"真正启动时使用的组合"完全一致。
-        _apply_runtime_env(runtime, paths)
+        _apply_runtime_env(runtime, paths.resources)
         ok, detail = _probe(runtime)
         if ok:
             _logger.info("已选定 CLR 运行时：%s", runtime)
