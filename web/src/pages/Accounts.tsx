@@ -82,7 +82,7 @@ const COLOR_CHOICES = [
 export function AccountsPage() {
   const { t } = useI18n()
   const { preferences } = usePreferences()
-  const { resourceStates, overview: accountOverview, accounts, allAccounts, refresh } = useLedger()
+  const { resourceStates, overview: accountOverview, allAccounts, refresh } = useLedger()
   const [editing, setEditing] = useState<Account | null>(null)
   const [creating, setCreating] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
@@ -95,15 +95,7 @@ export function AccountsPage() {
 
   const visible = showArchived ? allAccounts : allAccounts.filter((item) => !item.is_archived)
   const accountListUnavailable = resourceStates.accounts === 'error' && allAccounts.length === 0
-  const totals = accounts.reduce(
-    (accumulator, item) => {
-      if (!item.include_in_net_worth || item.currency !== 'CNY') return accumulator
-      if (item.balance_minor >= 0) accumulator.assets += item.balance_minor
-      else accumulator.liabilities += -item.balance_minor
-      return accumulator
-    },
-    { assets: 0, liabilities: 0 },
-  )
+  const totals = { assets: accountOverview?.assets_minor ?? 0, liabilities: accountOverview?.liabilities_minor ?? 0 }
 
   const openCreate = () => {
     setForm(EMPTY_FORM)
@@ -280,7 +272,7 @@ export function AccountsPage() {
           className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
         >
           {visible.map((account) => {
-            const overview = accounts.find((item) => item.id === account.id)
+            const overview = accountOverview?.accounts.find((item) => item.id === account.id)
             const balance = overview?.balance_minor ?? account.initial_balance_minor
             const limit = account.credit_limit_minor
             const used = limit > 0 ? Math.min(1, Math.max(0, -balance / limit)) : 0

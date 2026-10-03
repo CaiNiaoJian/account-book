@@ -45,6 +45,8 @@ export interface Preferences {
   }
   last_version: string
   first_run_completed: boolean
+  backup_enabled: boolean
+  backup_interval_hours: number
 }
 
 export type ThemePreference = 'light' | 'dark' | 'system'
@@ -82,6 +84,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   window: { width: 1320, height: 880, x: null, y: null, maximized: false },
   last_version: '',
   first_run_completed: false,
+  backup_enabled: true,
+  backup_interval_hours: 24,
 }
 
 declare global {
@@ -113,7 +117,7 @@ export const boot: BootPayload = (() => {
     appName: '记账本',
     appNameEn: 'AccountBook',
     version: '0.0.0-dev',
-    phase: 'P0',
+    phase: 'P6',
     token: tokenFromLocation(),
     port: 0,
     serverTime: new Date().toISOString(),

@@ -31,6 +31,7 @@ FastAPI 的同步端点在线程池中执行，因此每个请求必须有**自�
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -38,6 +39,7 @@ from pathlib import Path
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
+from ..core.errors import ValidationError
 from .base import Base
 
 __all__ = ["Database", "get_database"]
@@ -55,6 +57,9 @@ class Database:
     def __init__(self, path: Path, *, echo: bool = False) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._gate = threading.Condition()
+        self._active = 0
+        self._maintenance = False
 
         self.engine = create_engine(
             f"sqlite+pysqlite:///{self.path}",
@@ -76,11 +81,46 @@ class Database:
 
     # ---- 会话 ---------------------------------------------------------------
     @contextmanager
+    def operation(self):
+        """Allow concurrent requests; a complete backup waits for active operations to commit."""
+        with self._gate:
+            self._gate.wait_for(lambda: not self._maintenance)
+            self._active += 1
+        try:
+            yield
+        finally:
+            with self._gate:
+                self._active -= 1
+                self._gate.notify_all()
+
+    @contextmanager
+    def maintenance(self, *, timeout=30.0):
+        with self._gate:
+            if not self._gate.wait_for(lambda: not self._maintenance, timeout=timeout):
+                raise ValidationError('已有备份正在运行，请稍后重试')
+            self._maintenance = True
+            if not self._gate.wait_for(lambda: self._active == 0, timeout=timeout):
+                self._maintenance = False
+                self._gate.notify_all()
+                raise ValidationError('等待当前记账保存超时，备份未创建，请稍后重试')
+        try:
+            yield
+        finally:
+            with self._gate:
+                self._maintenance = False
+                self._gate.notify_all()
+
+    @contextmanager
     def session(self) -> Iterator[Session]:
         """一个"工作单元"：正常结束提交，异常回滚。
 
         服务层统一用它，因此不会出现"某处忘记 commit/rollback"的半提交状态。
         """
+        with self.operation(), self._session() as session:
+            yield session
+
+    @contextmanager
+    def _session(self) -> Iterator[Session]:
         session = self._session_factory()
         try:
             yield session

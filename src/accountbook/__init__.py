@@ -26,7 +26,7 @@ __all__ = ["APP_ID", "APP_NAME", "APP_NAME_EN", "APP_WINDOW_TITLE", "BUILD_PHASE
 
 #: 版本号 —— 单一事实来源。打包脚本与「关于」页均从此处读取。
 #: 版本规则：主.次.修订（主=不兼容的存储结构变更，次=功能阶段，修订=修复）
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 #: 展示名（中文为主，需求 4 项取舍：中文优先 + i18n 预留英文）
 APP_NAME = "记账本"
@@ -46,4 +46,4 @@ APP_WINDOW_TITLE = f"{APP_NAME} · {APP_NAME_EN}"
 
 #: 当前实现阶段 —— 前端用它在侧边栏为未实现功能打「计划于 Pn」标记
 #: 需求 10：明确区分「已实现 / 已预留」，避免用户以为功能缺失是缺陷
-BUILD_PHASE = "P0"
+BUILD_PHASE = "P6"

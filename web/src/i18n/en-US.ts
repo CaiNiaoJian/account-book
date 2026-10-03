@@ -11,6 +11,15 @@
 import type { Messages } from './zh-CN'
 
 export const enUS = {
+  reminders: { button: 'To do {count}', title: 'To do and reminders', empty: 'No due items right now.', failed: 'Some reminders could not load. Existing reminders are retained. Please retry.', handle: 'Handle', done: 'Done', later: 'Remind in 30 minutes', skip: 'Skip', reason: 'Reason for skipping', read: 'Mark read' },
+  backup: {
+    title: 'Backup and restore', scope: 'Save the entire book, attachments and settings.', local: 'Backups stay local and are not encrypted. Download a copy to another drive.',
+    automatic: 'Scheduled backups (while the app is running)', interval: 'Interval in hours', create: 'Back up now', created: 'Complete backup saved.',
+    import: 'Import backup', select: 'Select backup', preview: 'Verify and preview', download: 'Download backup',
+    contents: '{records} records · {accounts} accounts · {files} attachment files', settings: 'Theme: {theme} · Language: {language}',
+    restoreNote: 'Restore into an independent book. Your current book is preserved. Failed restores leave no partial book.',
+    restore: 'Restore independent book', restored: 'Restore complete. Open the restored book to check it.', open: 'Open restored book',
+  },
   app: {
     name: 'AccountBook',
     tagline: 'A local, offline, personal ledger that stays yours',
@@ -91,6 +100,7 @@ export const enUS = {
   },
 
   topbar: {
+    refreshConfirm: 'An editing window is open. Reloading will discard unsaved input. Continue? Cancel keeps your input.',
     searchPlaceholder: 'Search transactions, accounts, categories… (available from P1)',
     filterPlaceholder: 'Filter modules',
     quickAdd: 'New Entry',
@@ -175,7 +185,7 @@ export const enUS = {
     roadmap: 'Roadmap position',
     scopeLabel: 'What this module will provide',
     backToDashboard: 'Back to dashboard',
-    note: 'P0 delivers only the foundation: navigation, theming, i18n and the local service pipeline. This page arrives in {phase} as a runnable, verifiable feature.',
+    note: 'Core bookkeeping features cover P0–P6. This feature is planned for {phase}.',
   },
 
   settings: {
@@ -203,6 +213,7 @@ export const enUS = {
   },
 
   about: {
+    downloads: 'Downloads and release notes',
     version: 'Version',
     phase: 'Phase',
     buildType: 'Build',

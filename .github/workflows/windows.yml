@@ -1,0 +1,72 @@
+name: Windows verification
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install -e ".[dev]"
+          Push-Location web
+          npm ci --registry=https://registry.npmjs.org
+          Pop-Location
+      - name: Verify tests and source
+        shell: pwsh
+        run: |
+          .venv/Scripts/python.exe -m ruff check src tests/test_amount_consistency.py tests/test_backups.py tests/test_reminders.py tests/test_transaction_retries.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python.exe -m pytest -o addopts="--strict-markers" -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location web
+          npm run test:loading
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+      - name: Build frontend
+        shell: pwsh
+        run: packaging/build_frontend.ps1 -SkipInstall
+      - name: Ensure WebView2 runtime
+        shell: pwsh
+        run: |
+          $runtime = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application","$env:ProgramFiles\Microsoft\EdgeWebView\Application" -Filter msedgewebview2.exe -Recurse -ErrorAction SilentlyContinue
+          if (-not $runtime) {
+            $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebView2Setup.exe'
+            Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
+            $result = Start-Process -FilePath $installer -ArgumentList '/silent','/install' -WindowStyle Hidden -Wait -PassThru
+            if ($result.ExitCode -ne 0) { throw "WebView2 installation failed: $($result.ExitCode)" }
+          }
+      - name: Build and verify desktop startup and restart
+        shell: pwsh
+        run: packaging/build_backend.ps1 -SkipFrontend
+      - name: Assemble portable download
+        shell: pwsh
+        run: packaging/build_release.ps1
+      - name: Verify update preserves a previous-schema book
+        shell: pwsh
+        run: .venv/Scripts/python.exe packaging/verify_upgrade.py dist/AccountBook/AccountBook.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AccountBook-Windows
+          path: |
+            release/*.zip
+            release/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: verification-diagnostics
+          path: .smoke-test/
+          include-hidden-files: true

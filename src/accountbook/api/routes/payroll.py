@@ -584,6 +584,13 @@ def list_prompts(
     return {"items": scheduler_service.list_prompts(session, status=status_filter)}
 
 
+@router.get('/reminders', summary='跨页面可处理待办')
+def pending_reminders(session: Session = SessionDep):
+    from ...services import reminders
+    items = reminders.pending(session)
+    return {'items': items, 'count': len(items)}
+
+
 @router.post("/scheduler/prompts/{prompt_id}/snooze", summary="稍后提醒（有次数上限）")
 def snooze(prompt_id: int, payload: SnoozeIn, session: Session = SessionDep) -> Any:
     row = scheduler_service.snooze_prompt(session, prompt_id, minutes=payload.minutes)

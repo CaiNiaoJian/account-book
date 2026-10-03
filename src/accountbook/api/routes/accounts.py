@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
@@ -31,6 +33,7 @@ def list_accounts(
 @router.get("/overview", response_model=AccountOverviewOut, summary="资产总览（含余额）")
 def overview(
     include_archived: bool = Query(default=False),
+    as_of: date | None = Query(default=None),
     session: Session = SessionDep,
 ) -> AccountOverviewOut:
     """账户明细 + 资产/负债/净值汇总。
@@ -39,7 +42,7 @@ def overview(
     否则 FastAPI 会把 "overview" 当成账户 id 去解析。
     """
     return AccountOverviewOut.model_validate(
-        accounts_service.overview(session, include_archived=include_archived)
+        accounts_service.overview(session, include_archived=include_archived, as_of=as_of)
     )
 
 

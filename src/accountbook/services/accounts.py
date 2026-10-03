@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime, time
 from typing import Any
 
 from sqlalchemy import case, func, select
@@ -274,20 +275,23 @@ def _balance_expression():  # type: ignore[no-untyped-def]
     return signed
 
 
-def balances_by_account(session: Session, *, include_archived: bool = True) -> dict[int, int]:
+def balances_by_account(session: Session, *, include_archived: bool = True, as_of: date | None = None) -> dict[int, int]:
     """一次性算出所有账户的余额，避免按账户循环查询（N+1）。
 
     返回 ``{account_id: balance_minor}``；没有流水的账户也会出现（值为起点余额）。
     """
     accounts = list_accounts(session, include_archived=include_archived)
     balances: dict[int, int] = {account.id: account.initial_balance_minor for account in accounts}
+    live = [Transaction.deleted_at.is_(None), Transaction.status != "void"]
+    if as_of is not None:
+        live.append(Transaction.occurred_at <= datetime.combine(as_of, time.max))
 
     outgoing = (
         select(
             Transaction.account_id.label("account_id"),
             _balance_expression().label("net"),
         )
-        .where(Transaction.deleted_at.is_(None), Transaction.status != "void")
+        .where(*live)
         .group_by(Transaction.account_id)
     )
     for account_id, net in session.execute(outgoing).all():
@@ -301,8 +305,7 @@ def balances_by_account(session: Session, *, include_archived: bool = True) -> d
             func.sum(Transaction.amount_minor).label("net"),
         )
         .where(
-            Transaction.deleted_at.is_(None),
-            Transaction.status != "void",
+            *live,
             Transaction.to_account_id.is_not(None),
         )
         .group_by(Transaction.to_account_id)
@@ -320,15 +323,16 @@ def account_balance(session: Session, account_id: int) -> int:
     return balances_by_account(session).get(account_id, 0)
 
 
-def overview(session: Session, *, include_archived: bool = False) -> dict[str, Any]:
+def overview(session: Session, *, include_archived: bool = False, as_of: date | None = None) -> dict[str, Any]:
     """资产总览：账户列表 + 资产/负债/净值汇总。
 
     **资产与负债按余额正负分类**，而不是按账户类型：
     信用卡多还款会变成正余额（相当于银行存款），按类型硬分类会把这类情况算错。
     类型只用于界面分组与图标选择。
     """
-    accounts = list_accounts(session, include_archived=include_archived)
-    balances = balances_by_account(session)
+    # 归档只控制明细是否显示，资金仍属于账本。所有页面按同一天的日终口径汇总。
+    accounts = list_accounts(session, include_archived=True)
+    balances = balances_by_account(session, as_of=as_of or date.today())
 
     items: list[dict[str, Any]] = []
     total_positive = 0
@@ -355,6 +359,8 @@ def overview(session: Session, *, include_archived: bool = False) -> dict[str, A
                     total_positive += balance
                 else:
                     total_negative += balance
+        if account.is_archived and not include_archived:
+            continue
         items.append(
             {
                 "id": account.id,

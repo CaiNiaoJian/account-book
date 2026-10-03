@@ -7,6 +7,9 @@ import ts from 'typescript'
 const source = readFileSync(new URL('../src/features/ledger/loading.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } })
 const { loadResources, readTask } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputText).toString('base64')}`)
+const pageSource = readFileSync(new URL('../src/features/ledger/sections.ts', import.meta.url), 'utf8')
+const pageCompiled = ts.transpileModule(pageSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } })
+const { readSections, section } = await import(`data:text/javascript;base64,${Buffer.from(pageCompiled.outputText).toString('base64')}`)
 const deferred = () => {
   let resolve
   const promise = new Promise((done) => { resolve = done })
@@ -85,4 +88,13 @@ test('a successful empty response clears cached content', async () => {
     readTask('tags', async () => [], (data) => { tags = data }),
   ], new AbortController().signal, () => {})
   assert.deepEqual(tags, [])
+})
+
+test('a failed page section retains cached content while healthy sections are updated', async () => {
+  const values = { records: ['cached record'], overview: 'cached total' }
+  await assert.rejects(readSections([
+    section(async () => ['new record'], value => { values.records = value }),
+    section(async () => { throw new Error('failed read') }, value => { values.overview = value }),
+  ], 'Retry unavailable sections'), /Retry unavailable sections/)
+  assert.deepEqual(values, { records: ['new record'], overview: 'cached total' })
 })

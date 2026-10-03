@@ -87,6 +87,8 @@ class PreferencesPatch(BaseModel):
     privacy_mode: bool | None = None
     sidebar_collapsed: bool | None = None
     sidebar_order: list[str] | None = Field(default=None, max_length=64)
+    backup_enabled: bool | None = None
+    backup_interval_hours: int | None = Field(default=None, ge=1, le=8760)
 
 
 class PreferencesResponse(BaseModel):

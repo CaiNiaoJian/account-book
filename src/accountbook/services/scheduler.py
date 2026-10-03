@@ -87,8 +87,6 @@ TASK_KINDS = (
 _NOT_IMPLEMENTED = {
     "backup": "自动备份尚未实现（P8 数据治理）",
     "report": "报表定时生成尚未实现（P10）",
-    "bill": "账单日提醒尚未实现（待接入账单数据）",
-    "repayment": "还款日提醒尚未实现（待接入债务数据）",
 }
 
 
@@ -358,12 +356,20 @@ def _handle_custom(session: Session, task: ScheduledTask, moment: datetime) -> d
     return {"status": "success", "summary": "已生成通知"}
 
 
+def _handle_payment_reminders(session: Session, task: ScheduledTask, moment: datetime) -> dict[str, Any]:
+    from . import reminders
+    count = reminders.generate(session, now=moment, kinds={task.kind})
+    return {'status': 'success', 'summary': f'已生成 {count} 条待办提醒（不自动记账）'}
+
+
 _HANDLERS: dict[str, Callable[[Session, ScheduledTask, datetime], dict[str, Any]]] = {
     "payday": _handle_payday,
     "insurance": _handle_insurance,
     "recurring": _handle_recurring,
     "budget_close": _handle_budget_close,
     "custom": _handle_custom,
+    "bill": _handle_payment_reminders,
+    "repayment": _handle_payment_reminders,
 }
 
 

@@ -1523,3 +1523,11 @@ class Notification(Base, TimestampMixin):
     action_label: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     dedupe_key: Mapped[str] = mapped_column(String(80), nullable=False, default="", index=True)
+
+
+class TransactionRequestKey(Base):
+    """Committed together with the transaction; retries return its existing ID."""
+    __tablename__ = 'transaction_request_keys'
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey('transactions.id'), nullable=False)

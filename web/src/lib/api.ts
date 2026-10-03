@@ -122,6 +122,18 @@ async function upload<T>(path: string, file: File): Promise<T> {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Read deadlines cover both headers and body. Writes are never automatically retried or aborted.
+  if (init.method && init.method !== 'GET') return performRequest<T>(path, init)
+  const controller = new AbortController()
+  const onAbort = () => controller.abort()
+  init.signal?.addEventListener('abort', onAbort, { once: true })
+  if (init.signal?.aborted) controller.abort()
+  const timer = setTimeout(onAbort, 20000)
+  try { return await performRequest<T>(path, { ...init, signal: controller.signal }) }
+  finally { clearTimeout(timer); init.signal?.removeEventListener('abort', onAbort) }
+}
+
+async function performRequest<T>(path: string, init: RequestInit): Promise<T> {
   let response: Response
   try {
     response = await fetch(path, {
@@ -807,7 +819,23 @@ export interface AssetWall {
 // -----------------------------------------------------------------------------
 // 接口
 // -----------------------------------------------------------------------------
+export interface BackupInfo {
+  name: string
+  created_at: string
+  kind: string
+  summary: { transactions?: number; accounts?: number; attachments?: number }
+  settings?: { theme: string; language: string }
+  attachment_files?: number
+}
+
 export const api = {
+  reminders: () => request<{ items: PendingPrompt[]; count: number }>('/api/reminders'),
+  backups: () => request<{ items: BackupInfo[] }>('/api/backups'),
+  createBackup: () => request<BackupInfo>('/api/backups', { method: 'POST' }),
+  importBackup: (file: File) => upload<BackupInfo>('/api/backups/import', file),
+  previewBackup: (name: string) => request<BackupInfo>(`/api/backups/${encodeURIComponent(name)}/preview`),
+  restoreBackup: (name: string) => request<{ name: string; directory: string }>(`/api/backups/${encodeURIComponent(name)}/restore`, { method: 'POST' }),
+  openRestored: (name: string) => request(`/api/backups/restored/${encodeURIComponent(name)}/open`, { method: 'POST' }),
   // ---- 系统（P0） ----------------------------------------------------------
   /** 探活：用于前端显示"服务已连接"状态 */
   health: () => request<{ status: string; version: string; phase: string }>('/health'),
@@ -883,8 +911,8 @@ export const api = {
   transactions: (filter: TransactionFilter = {}) =>
     request<TransactionList>(`/api/transactions${query({ ...filter })}`),
   transaction: (id: number) => request<Transaction>(`/api/transactions/${id}`),
-  createTransaction: (payload: TransactionInput) =>
-    request<Transaction>('/api/transactions', { method: 'POST', body: JSON.stringify(payload) }),
+  createTransaction: (payload: TransactionInput, requestKey?: string) =>
+    request<Transaction>('/api/transactions', { method: 'POST', body: JSON.stringify(payload), headers: requestKey ? { 'Idempotency-Key': requestKey } : {} }),
   updateTransaction: (id: number, changes: Partial<TransactionInput>) =>
     request<Transaction>(`/api/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
   deleteTransaction: (id: number) => request<void>(`/api/transactions/${id}`, { method: 'DELETE' }),

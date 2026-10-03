@@ -163,6 +163,8 @@ class UserPreferences(BaseModel):
     # 生命周期标记
     last_version: str = ""
     first_run_completed: bool = False
+    backup_enabled: bool = True
+    backup_interval_hours: int = Field(default=24, ge=1, le=8760)
 
 
 class ConfigStore:

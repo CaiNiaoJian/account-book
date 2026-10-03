@@ -19,6 +19,7 @@ import { Icon } from '@/components/Icon'
 import { Chart } from '@/components/Chart'
 import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { useI18n } from '@/i18n'
+import { readSections, section } from '@/features/ledger/sections'
 import {
   api,
   type BudgetOverview,
@@ -590,9 +591,10 @@ export function RecurringPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [list, soon] = await Promise.all([api.recurringRules(), api.recurringUpcoming(30)])
-      setRules(list)
-      setUpcoming(soon.items)
+      await readSections([
+        section(api.recurringRules, setRules),
+        section(() => api.recurringUpcoming(30), data => setUpcoming(data.items)),
+      ], t('ledgerLoading.notLoaded'))
       setError(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))

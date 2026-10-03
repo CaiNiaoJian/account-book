@@ -3,7 +3,7 @@
 > 本地优先、离线可用、Apple 美学的个人记账与财务分析桌面工具。
 > 账本只存在你自己的电脑上 —— 没有云同步、没有遥测、没有启动联网。
 
-**当前阶段：P0（基座骨架）已交付。** 功能路线与验收标准见 [docs/PLAN.md](docs/PLAN.md)。
+**当前版本：0.2.0，主要功能覆盖 P0–P6。** 更新与恢复见 [docs/UPDATE.md](docs/UPDATE.md)，变更见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 
 ---
 
@@ -61,7 +61,8 @@ python run.py --data-dir D:\账本  # 指定数据目录（多档案隔离）
 
 ```powershell
 # 前端 → 后端 → 便携 zip / 安装包（一键）
-powershell -ExecutionPolicy Bypass -File packaging\build_all.ps1
+powershell -ExecutionPolicy Bypass -File packaging\build_backend.ps1
+powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1
 
 # 仅打包后端（含冒烟测试）
 powershell -ExecutionPolicy Bypass -File packaging\build_backend.ps1

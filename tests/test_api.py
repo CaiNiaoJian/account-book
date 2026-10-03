@@ -130,7 +130,7 @@ class TestSystemInfo:
     def test_info_shape_and_mode(self, authed_client: tuple[TestClient, Any]) -> None:
         test_client, _ = authed_client
         body = test_client.get("/api/system/info").json()
-        assert body["phase"] == "P0"
+        assert body["phase"] == "P6"
         assert body["port"] == TEST_PORT
         assert body["paths"]["data_dir"]
         # 环境信息只用于本机展示，不应包含除路径外的任何用户数据字段

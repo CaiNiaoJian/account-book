@@ -107,7 +107,7 @@ def dashboard(
     )
     previous = transactions_service.summary(session, start=prev_start, end=prev_end)
 
-    overview = accounts_service.overview(session)
+    overview = accounts_service.overview(session, as_of=today)
 
     recent_query = transactions_service.TransactionQuery(limit=recent_limit, order="desc")
     recent, _ = transactions_service.list_transactions(session, recent_query)

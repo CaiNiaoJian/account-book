@@ -20,6 +20,7 @@ import { NavLink } from 'react-router-dom'
 
 import { Icon } from '@/components/Icon'
 import { useI18n } from '@/i18n'
+import { versionLabel } from '@/lib/boot'
 import { NAV_GROUPS, isImplemented, type NavItem } from './navigation'
 
 interface SidebarProps {
@@ -60,7 +61,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
         </div>
         <div className="min-w-0">
           <p className="truncate text-ab-subhead font-semibold leading-4 text-label">{t('app.name')}</p>
-          <p className="ab-tnum truncate text-ab-caption2 leading-3 text-label-3">{`v0.1.0 · P0`}</p>
+          <p className="ab-tnum truncate text-ab-caption2 leading-3 text-label-3">{`v${versionLabel}`}</p>
         </div>
       </div>
 

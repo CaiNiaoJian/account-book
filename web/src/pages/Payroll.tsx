@@ -25,6 +25,7 @@ import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { usePreferences } from '@/app/preferences'
 import { resolveToken } from '@/design/tokens'
 import { useI18n } from '@/i18n'
+import { readSections, section } from '@/features/ledger/sections'
 import {
   api,
   ApiError,
@@ -348,32 +349,25 @@ export function PayrollPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [sourceList, recordList, payroll, cover] = await Promise.all([
-        api.payrollSources(),
-        api.payrollRecords({ limit: 200 }),
-        api.payrollOverview(period, 12),
-        api.insuranceOverview(insuranceRange.start, insuranceRange.end),
-      ])
-      setSources(sourceList.items)
-      setRecords(recordList.items)
-      setOverview(payroll)
-      setInsurance(cover)
+      let chosen = sourceId
+      await readSections([
+        section(api.payrollSources, data => { setSources(data.items); chosen = sourceId ?? data.items[0]?.id ?? null; setSourceId(chosen) }),
+        section(() => api.payrollRecords({ limit: 200 }), data => setRecords(data.items)),
+        section(() => api.payrollOverview(period, 12), setOverview),
+        section(() => api.insuranceOverview(insuranceRange.start, insuranceRange.end), setInsurance),
+      ], t('ledgerLoading.notLoaded'))
       setError(null)
-      const chosen = sourceId ?? sourceList.items[0]?.id ?? null
-      setSourceId(chosen)
       if (chosen !== null) {
-        const [computed, date] = await Promise.all([
-          api.computePayroll(chosen),
-          api.payDate(chosen, period),
-        ])
-        setCompute(computed)
-        setPayday(date)
+        await readSections([
+          section(() => api.computePayroll(chosen!), setCompute),
+          section(() => api.payDate(chosen!, period), setPayday),
+        ], t('ledgerLoading.notLoaded'))
       } else {
         setCompute(null)
         setPayday(null)
       }
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.detail : String(cause))
+      setError(cause instanceof ApiError ? cause.detail : cause instanceof Error ? cause.message : String(cause))
     } finally {
       setLoading(false)
     }
@@ -391,13 +385,10 @@ export function PayrollPage() {
     let cancelled = false
     void (async () => {
       try {
-        const [computed, date] = await Promise.all([
-          api.computePayroll(sourceId),
-          api.payDate(sourceId, period),
-        ])
-        if (cancelled) return
-        setCompute(computed)
-        setPayday(date)
+        await readSections([
+          section(() => api.computePayroll(sourceId), value => { if (!cancelled) setCompute(value) }),
+          section(() => api.payDate(sourceId, period), value => { if (!cancelled) setPayday(value) }),
+        ], t('ledgerLoading.notLoaded'))
       } catch (cause) {
         if (!cancelled) setError(cause instanceof ApiError ? cause.detail : String(cause))
       }
@@ -485,6 +476,7 @@ export function PayrollPage() {
       {error ? (
         <div className="rounded-ab-sm bg-negative/10 px-3 py-2 text-ab-footnote text-negative">
           {error}
+          <button type="button" className="ab-btn-secondary ml-2" disabled={loading} onClick={() => void load()}>{t('common.retry')}</button>
         </div>
       ) : null}
 
@@ -1555,19 +1547,16 @@ function InsuranceDialog({
     const chosen = profileId ?? profileList.items[0]?.id ?? null
     setProfileId(chosen)
     const city = profileList.items.find((profile) => profile.id === chosen)?.city ?? ''
-    const itemList = await api.insuranceItems(city)
-    if (version !== loadVersion.current) return
-    setItems(itemList.items)
     if (chosen !== null) {
-      const [c, s, w] = await Promise.all([
-        api.computeInsurance(chosen),
-        api.insuranceStatement(chosen, Number(period.slice(0, 4))),
-        api.insuranceWithdrawals(chosen),
-      ])
-      if (version !== loadVersion.current) return
-      setComputed(c)
-      setStatement(s)
-      setWithdrawals(w.items as unknown as InsuranceWithdrawal[])
+      await readSections([
+        section(() => api.insuranceItems(city), value => { if (version === loadVersion.current) setItems(value.items) }),
+        section(() => api.computeInsurance(chosen), value => { if (version === loadVersion.current) setComputed(value) }),
+        section(() => api.insuranceStatement(chosen, Number(period.slice(0, 4))), value => { if (version === loadVersion.current) setStatement(value) }),
+        section(() => api.insuranceWithdrawals(chosen), value => { if (version === loadVersion.current) setWithdrawals(value.items as unknown as InsuranceWithdrawal[]) }),
+      ], t('ledgerLoading.notLoaded'))
+    } else {
+      const itemList = await api.insuranceItems(city)
+      if (version === loadVersion.current) setItems(itemList.items)
     }
   }, [profileId, period])
 

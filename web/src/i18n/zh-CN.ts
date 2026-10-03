@@ -14,6 +14,15 @@
  */
 
 export const zhCN = {
+  reminders: { button: '待办 {count}', title: '待办与提醒', empty: '目前没有到期的待办。', failed: '部分提醒暂未加载，已显示的提醒会保留，请重试。', handle: '前往处理', done: '已处理', later: '30 分钟后提醒', skip: '明确跳过', reason: '填写跳过原因', read: '标记已读' },
+  backup: {
+    title: '备份与恢复', scope: '完整保存账本、附件与设置。', local: '备份仅保存在本机，未加密；可下载后另存到其他磁盘。',
+    automatic: '定期备份（程序运行期间）', interval: '间隔小时', create: '立即完整备份', created: '完整备份已保存。',
+    import: '导入备份文件', select: '选择备份', preview: '验证并预览', download: '下载备份',
+    contents: '{records} 笔记录 · {accounts} 个账户 · {files} 个附件文件', settings: '外观：{theme} · 语言：{language}',
+    restoreNote: '恢复为独立账本；不会覆盖当前账本。校验或恢复失败时，不会留下半份账本。',
+    restore: '恢复为独立账本', restored: '恢复完成，可打开恢复的账本核对。', open: '打开恢复的账本',
+  },
   app: {
     name: '记账本',
     tagline: '本地、离线、属于你自己的财务账本',
@@ -97,6 +106,7 @@ export const zhCN = {
   },
 
   topbar: {
+    refreshConfirm: '当前填写窗口仍然打开。刷新会丢弃尚未保存的输入，是否继续？取消可保留输入。',
     searchPlaceholder: '搜索流水、账户、分类…（P1 起可用）',
     filterPlaceholder: '筛选模块',
     quickAdd: '记一笔',
@@ -181,7 +191,7 @@ export const zhCN = {
     roadmap: '路线图位置',
     scopeLabel: '该模块将提供',
     backToDashboard: '返回概览',
-    note: 'P0 只交付基座骨架：导航、主题、i18n 与本地服务链路。本页内容将在 {phase} 阶段实现，届时会以可运行、可验证的形式交付。',
+    note: '主要记账功能已覆盖 P0–P6。本页功能计划于 {phase} 阶段实现。',
   },
 
   settings: {
@@ -208,6 +218,7 @@ export const zhCN = {
   },
 
   about: {
+    downloads: '版本下载与更新说明',
     version: '版本',
     phase: '实现阶段',
     buildType: '构建类型',

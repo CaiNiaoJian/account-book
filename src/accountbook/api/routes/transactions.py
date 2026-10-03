@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ...core.errors import ValidationError
+from ...core.errors import ConflictError, ValidationError
+from ...db.models import TransactionRequestKey
 from ...services import transactions as transactions_service
 from ...services.stats import transaction_brief
 from ..deps import get_session
@@ -100,7 +103,19 @@ def list_transactions(
 
 
 @router.post("", response_model=TransactionOut, status_code=status.HTTP_201_CREATED, summary="记一笔")
-def create_transaction(payload: TransactionCreate, session: Session = SessionDep) -> TransactionOut:
+def create_transaction(payload: TransactionCreate, request: Request, session: Session = SessionDep) -> TransactionOut:
+    key = request.headers.get('Idempotency-Key', '')
+    digest = hashlib.sha256(payload.model_dump_json().encode()).hexdigest()
+    if key:
+        if len(key) > 128 or not key.isascii() or not all(c.isalnum() or c in '-_' for c in key):
+            raise ValidationError('记账请求标识不合法')
+        # Serialize only keyed creates, including the first lookup, to protect simultaneous retries.
+        session.execute(text('BEGIN IMMEDIATE'))
+        previous = session.get(TransactionRequestKey, key)
+        if previous:
+            if previous.payload_hash != digest:
+                raise ConflictError('同一次请求的内容发生变化，请重新提交')
+            return _to_out(transactions_service.get_transaction(session, previous.transaction_id))
     data = payload.model_dump(exclude_none=True)
     # 分账与标签单独取出：它们的语义是"整体替换"，而不是普通字段赋值
     splits = data.pop("splits", None)
@@ -111,6 +126,8 @@ def create_transaction(payload: TransactionCreate, session: Session = SessionDep
         tag_ids=tag_ids,
         **data,
     )
+    if key:
+        session.add(TransactionRequestKey(key=key, payload_hash=digest, transaction_id=transaction.id))
     return _to_out(transaction)
 
 

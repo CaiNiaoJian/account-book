@@ -24,6 +24,7 @@ import { usePreferences } from '@/app/preferences'
 import { useCallback, useEffect } from 'react'
 
 import { useLedger } from '@/features/ledger/store'
+import { readSections, section } from '@/features/ledger/sections'
 
 /** 区间档位 */
 type Span = '3m' | '6m' | '12m' | 'ytd'
@@ -63,21 +64,14 @@ export function StatisticsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [nextSeries, nextCashFlow, nextSummary, nextCalendar, nextWall, nextTrend] =
-        await Promise.all([
-        api.netWorthSeries(range.start, range.end),
-        api.cashFlow({ months: range.months }),
-        api.summary({ start: range.start, end: range.end, top_categories: 12 }),
-        api.calendar(range.start, range.end, 'expense'),
-        api.assetWall(),
-        api.categoryTrend(range.months),
-      ])
-      setSeries(nextSeries)
-      setCashFlow(nextCashFlow)
-      setSummary(nextSummary)
-      setCalendarDays(nextCalendar.days)
-      setWall(nextWall)
-      setTrend(nextTrend)
+      await readSections([
+        section(() => api.netWorthSeries(range.start, range.end), setSeries),
+        section(() => api.cashFlow({ months: range.months }), setCashFlow),
+        section(() => api.summary({ start: range.start, end: range.end, top_categories: 12 }), setSummary),
+        section(() => api.calendar(range.start, range.end, 'expense'), data => setCalendarDays(data.days)),
+        section(api.assetWall, setWall),
+        section(() => api.categoryTrend(range.months), setTrend),
+      ], t('ledgerLoading.notLoaded'))
       setError(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))

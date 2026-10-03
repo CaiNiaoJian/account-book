@@ -262,10 +262,10 @@ class TestRunDue:
     def test_not_implemented_kinds_report_skipped(self, session) -> None:
         """**诚实性保证。** 一个"成功但什么也没做"的备份任务
         会让用户以为备份在跑。"""
-        for kind in ("backup", "report", "bill", "repayment"):
+        for kind in ("backup", "report"):
             self._due_task(session, code=f"k-{kind}", kind=kind)
         result = scheduler.run_due(session, now=NOW)
-        assert result["count"] == 4
+        assert result["count"] == 2
         assert all(item["status"] == "skipped" for item in result["items"])
         assert all(item["summary"] for item in result["items"])
         assert all("尚未实现" in item["summary"] for item in result["items"])

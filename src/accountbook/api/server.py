@@ -35,6 +35,7 @@ from .routes import accounts as accounts_routes
 from .routes import ai as ai_routes
 from .routes import assets as assets_routes
 from .routes import attachments as attachments_routes
+from .routes import backups as backups_routes
 from .routes import calendar as calendar_routes
 from .routes import categories as categories_routes
 from .routes import kline as kline_routes
@@ -170,6 +171,7 @@ def create_app(ctx: AppContext) -> FastAPI:
 
     # ---- 业务路由 -----------------------------------------------------------
     app.include_router(system_routes.router)
+    app.include_router(backups_routes.router)
     app.include_router(meta_routes.router)
     app.include_router(accounts_routes.router)
     app.include_router(categories_routes.router)

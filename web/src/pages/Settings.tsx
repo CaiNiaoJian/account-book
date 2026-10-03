@@ -31,14 +31,12 @@ interface UpcomingItem {
 }
 
 const UPCOMING: UpcomingItem[] = [
-  { icon: 'quickAdd', labelKey: 'settings.upcomingHotkeys', phase: 'P1' },
-  { icon: 'scheduler', labelKey: 'settings.upcomingScheduler', phase: 'P6' },
-  { icon: 'intelligence', labelKey: 'settings.upcomingAi', phase: 'P7' },
   { icon: 'lock', labelKey: 'settings.upcomingSecurity', phase: 'P8' },
   { icon: 'plugins', labelKey: 'settings.upcomingPlugins', phase: 'P9' },
 ]
 
 import { AiConfigCard } from '@/features/reports/AiPanel'
+import { BackupCard } from '@/features/ledger/BackupCard'
 
 export function SettingsPage() {
   const { t, language } = useI18n()
@@ -146,6 +144,7 @@ export function SettingsPage() {
       </motion.div>
 
       {/* ---- 后续设置项 --------------------------------------------------- */}
+      <motion.div variants={staggerItem}><BackupCard /></motion.div>
       <motion.div variants={staggerItem}>
         <AiConfigCard />
 

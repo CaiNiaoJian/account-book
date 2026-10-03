@@ -40,6 +40,11 @@ def get_session(request: Request) -> Iterator[Session]:
             "数据库尚未就绪",
         )
 
+    with database.operation():
+        yield from _session(database)
+
+
+def _session(database) -> Iterator[Session]:
     session = database.new_session()
     try:
         yield session

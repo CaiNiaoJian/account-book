@@ -78,6 +78,12 @@ if ((Get-NormalizedVersion $version) -ne (Get-NormalizedVersion $fileVersion)) {
     throw "版本号不一致：__init__.py=$version 与 version_info.txt=$fileVersion 归一化后不同。请先同步两者再打包。"
 }
 Write-Ok "版本号一致：$version（PE 资源写作 $(Get-NormalizedVersion $version)）"
+foreach ($packageFile in @('web/package.json', 'web/package-lock.json')) {
+    $packageVersion = (Get-Content -LiteralPath (Join-Path $repoRoot $packageFile) -Raw | ConvertFrom-Json).version
+    if ($packageVersion -ne $version) { throw "Version mismatch: $packageFile=$packageVersion, Python=$version" }
+}
+$projectMatch = Select-String -LiteralPath (Join-Path $repoRoot 'pyproject.toml') -Pattern '^version\s*=\s*"([^"]+)"'
+if ($projectMatch.Matches[0].Groups[1].Value -ne $version) { throw 'Version mismatch: pyproject.toml' }
 
 # ---- 4. PyInstaller --------------------------------------------------------
 Write-Step '运行 PyInstaller'

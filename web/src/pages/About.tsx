@@ -49,6 +49,7 @@ export function AboutPage() {
               <h2 className="text-ab-title2 text-label">{t('app.name')}</h2>
               <p className="mt-0.5 text-ab-callout text-label-2">{t('app.tagline')}</p>
               <p className="ab-tnum mt-1 font-mono text-ab-caption text-label-3">{versionLabel}</p>
+              <a className="mt-2 inline-block text-ab-footnote text-accent" href="https://github.com/CaiNiaoJian/account-book/releases" target="_blank" rel="noreferrer">{t('about.downloads')}</a>
             </div>
           </div>
         </Card>

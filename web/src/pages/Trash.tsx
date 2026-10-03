@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Icon } from '@/components/Icon'
 import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { useI18n } from '@/i18n'
+import { readSections, section } from '@/features/ledger/sections'
 import { api, ApiError, type TrashItem, type TrashList, type TrashSummary } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 
@@ -39,9 +40,10 @@ export function TrashPage() {
   const load = useCallback(async (target: string) => {
     setLoading(true)
     try {
-      const [counts, rows] = await Promise.all([api.trashSummary(), api.trashList(target)])
-      setSummary(counts)
-      setList(rows)
+      await readSections([
+        section(api.trashSummary, setSummary),
+        section(() => api.trashList(target), setList),
+      ], t('ledgerLoading.notLoaded'))
       setError(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))

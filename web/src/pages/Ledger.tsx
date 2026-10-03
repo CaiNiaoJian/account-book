@@ -19,6 +19,7 @@ import { Icon } from '@/components/Icon'
 import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { usePreferences } from '@/app/preferences'
 import { useI18n } from '@/i18n'
+import { readSections, section } from '@/features/ledger/sections'
 import {
   api,
   ApiError,
@@ -81,16 +82,13 @@ export function LedgerPage() {
     if (accountId === null) return
     setLoading(true)
     try {
-      const [doc, balance] = await Promise.all([
-        api.ledger(accountId, range),
-        api.trialBalance(),
-      ])
-      setDocument(doc)
-      setTrial(balance)
+      await readSections([
+        section(() => api.ledger(accountId, range), setDocument),
+        section(api.trialBalance, setTrial),
+      ], t('ledgerLoading.notLoaded'))
       setError(null)
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.detail : String(cause))
-      setDocument(null)
     } finally {
       setLoading(false)
     }

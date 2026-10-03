@@ -122,7 +122,7 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
         registerCurrencies(data)
         setCurrencies(data)
       }),
-      readTask('overview', (signal) => api.accountsOverview({}, signal), setOverview),
+      readTask('overview', (signal) => api.accountsOverview({ include_archived: true }, signal), setOverview),
       readTask('accounts', (signal) => api.accounts({ include_archived: true }, signal), setAllAccounts),
       readTask('expenseTree', (signal) => api.categoryTree({ kind: 'expense' }, signal),
         (expense) => setTree((previous) => ({ ...previous, expense }))),
@@ -193,7 +193,7 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
       enums,
       currencies,
       overview,
-      accounts: overview?.accounts ?? [],
+      accounts: overview?.accounts.filter((account) => !account.is_archived) ?? [],
       allAccounts,
       categories,
       tree,

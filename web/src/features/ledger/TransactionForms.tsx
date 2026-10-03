@@ -123,6 +123,8 @@ export function useTransactionDraft(initial?: Transaction) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const hydratedTags = useRef<Transaction | undefined>(undefined)
+  const inFlight = useRef(false)
+  const pendingCreate = useRef<{ signature: string; key: string; payload: ReturnType<typeof toPayload> } | null>(null)
 
   // 编辑已有流水时把标签**名字**还原成 id。
   // 接口在列表里只回传名字（展示用），而提交需要 id；
@@ -166,14 +168,20 @@ export function useTransactionDraft(initial?: Transaction) {
     (draft.type !== 'transfer' || (draft.toAccountId !== null && draft.toAccountId !== draft.accountId))
 
   const submit = async (options: { keepTime?: string; onDone?: (created: Transaction) => void } = {}) => {
-    if (!canSubmit) return null
+    if (!canSubmit || inFlight.current) return null
+    inFlight.current = true
     setBusy(true)
     setError(null)
     try {
-      const payload = toPayload(draft, options.keepTime)
+      const signature = JSON.stringify([draft, options.keepTime])
+      if (!initial && pendingCreate.current?.signature !== signature) {
+        pendingCreate.current = { signature, key: crypto.randomUUID(), payload: toPayload(draft, options.keepTime) }
+      }
+      const payload = initial ? toPayload(draft, options.keepTime) : pendingCreate.current!.payload
       const created = initial
         ? await api.updateTransaction(initial.id, payload)
-        : await api.createTransaction(payload)
+        : await api.createTransaction(payload, pendingCreate.current!.key)
+      pendingCreate.current = null
       options.onDone?.(created)
       setDraft((previous) => ({ ...EMPTY_DRAFT, accountId: previous.accountId, day: previous.day }))
       return created
@@ -183,6 +191,7 @@ export function useTransactionDraft(initial?: Transaction) {
       setError(cause instanceof ApiError ? cause.detail : cause instanceof Error ? cause.message : String(cause))
       return null
     } finally {
+      inFlight.current = false
       setBusy(false)
     }
   }

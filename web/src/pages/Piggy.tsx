@@ -28,6 +28,7 @@ import { Icon } from '@/components/Icon'
 import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { usePreferences } from '@/app/preferences'
 import { useI18n } from '@/i18n'
+import { readSections, section } from '@/features/ledger/sections'
 import {
   api,
   ApiError,
@@ -238,13 +239,13 @@ export function PiggyPage() {
 
   const load = useCallback(async () => {
     try {
-      const [list, goalList] = await Promise.all([api.piggyBanks(), api.goals()])
-      setBanks(list.items)
-      setGoals(goalList.items)
+      await readSections([
+        section(api.piggyBanks, data => setBanks(data.items)),
+        section(api.goals, data => setGoals(data.items)),
+      ], t('ledgerLoading.notLoaded'))
       setError(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
-      setBanks([])
     }
   }, [])
 

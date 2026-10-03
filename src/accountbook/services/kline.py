@@ -405,14 +405,17 @@ def bars(
         ).all()
     }
     needs_rebuild = any(
-        span_start not in existing or span_start == period_bounds(period, today)[0] for span_start, _ in spans
+        span_start not in existing
+        or existing[span_start].period_end != span_end
+        or span_start <= today <= span_end
+        for span_start, span_end in spans
     )
     if needs_rebuild:
         rebuild(session, period=period, start=start, end=end)
 
     rows = session.scalars(
         select(AssetOhlc)
-        .where(AssetOhlc.period == period, AssetOhlc.period_start >= start, AssetOhlc.period_start <= end)
+        .where(AssetOhlc.period == period, AssetOhlc.period_start.in_([span[0] for span in spans]))
         .order_by(AssetOhlc.period_start)
     ).all()
     return [

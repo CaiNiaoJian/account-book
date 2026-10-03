@@ -17,6 +17,7 @@ import { Icon } from '@/components/Icon'
 import { Card, EmptyState, Skeleton } from '@/components/ui'
 import { ApiError, api, type NotificationItem, type PendingPrompt, type ScheduledTask, type TaskHealth, type TaskRun } from '@/lib/api'
 import { useI18n } from '@/i18n'
+import { readSections, section } from '@/features/ledger/sections'
 import { formatDateTime } from '@/lib/format'
 
 const CATCH_UP_LABELS: Record<string, string> = {
@@ -48,19 +49,13 @@ export function SchedulerPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [blocking, taskList, history, healthBody, notes] = await Promise.all([
-        api.blockingPrompts(),
-        api.scheduledTasks(),
-        api.taskHistory(50),
-        api.taskHealth(),
-        api.notifications({ limit: 50 }),
-      ])
-      setPrompts(blocking.items)
-      setTasks(taskList.items)
-      setRuns(history.items)
-      setHealth(healthBody)
-      setNotifications(notes.items)
-      setUnread(notes.unread)
+      await readSections([
+        section(api.blockingPrompts, data => setPrompts(data.items)),
+        section(api.scheduledTasks, data => setTasks(data.items)),
+        section(() => api.taskHistory(50), data => setRuns(data.items)),
+        section(api.taskHealth, setHealth),
+        section(() => api.notifications({ limit: 50 }), data => { setNotifications(data.items); setUnread(data.unread) }),
+      ], t('ledgerLoading.notLoaded'))
       setError(null)
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.detail : String(cause))

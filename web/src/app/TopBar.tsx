@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router-dom'
 import { Icon } from '@/components/Icon'
 import { IconButton, Segmented } from '@/components/ui'
 import { useLedger } from '@/features/ledger/store'
+import { ReminderCenter } from '@/features/ledger/ReminderCenter'
 import { useI18n, LANGUAGES, LANGUAGE_LABELS } from '@/i18n'
 import type { LanguageCode, ThemePreference } from '@/lib/boot'
 import { ALL_NAV_ITEMS, isImplemented } from './navigation'
@@ -39,6 +40,8 @@ export function TopBar({ title, phase, collapsed, onToggleCollapse }: TopBarProp
 
   const refreshPage = () => {
     if (refreshing) return
+    // Keep open forms intact unless the user explicitly chooses to reload them.
+    if (document.querySelector('[role="dialog"]') && !window.confirm(t('topbar.refreshConfirm'))) return
     setRefreshing(true)
     // 整页重新加载会重试页面请求和全局账本字典，保留当前 URL 与会话。
     // 仅刷新账本 Context 无法恢复各页面独立维护的加载失败状态。
@@ -68,6 +71,7 @@ export function TopBar({ title, phase, collapsed, onToggleCollapse }: TopBarProp
 
   return (
     <header className="ab-material relative z-10 flex h-[52px] shrink-0 items-center gap-2 border-b border-separator/60 px-3.5">
+      <ReminderCenter />
       <IconButton
         icon="panelLeft"
         label={collapsed ? t('topbar.expandSidebar') : t('topbar.collapseSidebar')}
