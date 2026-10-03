@@ -79,7 +79,8 @@ if ((Get-NormalizedVersion $version) -ne (Get-NormalizedVersion $fileVersion)) {
 }
 Write-Ok "版本号一致：$version（PE 资源写作 $(Get-NormalizedVersion $version)）"
 foreach ($packageFile in @('web/package.json', 'web/package-lock.json')) {
-    $packageVersion = (Get-Content -LiteralPath (Join-Path $repoRoot $packageFile) -Raw | ConvertFrom-Json).version
+    $packageVersion = & $python -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['version'])" (Join-Path $repoRoot $packageFile)
+    if ($LASTEXITCODE -ne 0) { throw "Unable to read version: $packageFile" }
     if ($packageVersion -ne $version) { throw "Version mismatch: $packageFile=$packageVersion, Python=$version" }
 }
 $projectMatch = Select-String -LiteralPath (Join-Path $repoRoot 'pyproject.toml') -Pattern '^version\s*=\s*"([^"]+)"'
