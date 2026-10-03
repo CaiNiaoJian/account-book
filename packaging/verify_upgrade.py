@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -21,17 +22,20 @@ def verify(executable: Path):
     with tempfile.TemporaryDirectory(prefix='upgrade-', dir='.smoke-test') as temporary:
         root = Path(temporary).resolve()
         database = Database(root / 'accountbook.db')
-        command.upgrade(_build_config(database), '6b308efaafa3')
-        with database.session() as session:
-            ensure_seed_data(session)
-            cash = accounts.list_accounts(session)[0]
-            cash.initial_balance_minor = 123456
-            row = transactions.create_transaction(session, type='expense', account_id=cash.id,
-                amount_minor=321, occurred_at=datetime.now())
-            attachment = attachments.save(session, root=root / 'attachments', transaction_id=row.id,
-                filename='upgrade.pdf', data=b'%PDF-1.7\nupgrade preservation', kind='transaction')
-            record_id, file_ref = row.id, attachment.file_ref
-        database.dispose()
+        try:
+            command.upgrade(_build_config(database), '6b308efaafa3')
+            with database.session() as session:
+                ensure_seed_data(session)
+            with database.session() as session:
+                cash = accounts.list_accounts(session)[0]
+                cash.initial_balance_minor = 123456
+                row = transactions.create_transaction(session, type='expense', account_id=cash.id,
+                    amount_minor=321, occurred_at=datetime.now())
+                attachment = attachments.save(session, root=root / 'attachments', transaction_id=row.id,
+                    filename='upgrade.pdf', data=b'%PDF-1.7\nupgrade preservation', kind='transaction')
+                record_id, file_ref = row.id, attachment.file_ref
+        finally:
+            database.dispose()
         ConfigStore(root / 'config.json').update(theme='dark', language='en-US', backup_enabled=False,
             custom_upgrade_value={'keep': True})
         with (root / 'stdout.txt').open('w') as stdout, (root / 'stderr.txt').open('w') as stderr:
@@ -48,7 +52,7 @@ def verify(executable: Path):
                     time.sleep(0.2)
                 if not ready:
                     raise RuntimeError('Packaged upgrade did not reach a ready local service')
-                with sqlite3.connect(root / 'accountbook.db') as db:
+                with closing(sqlite3.connect(root / 'accountbook.db')) as db:
                     assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0] == '7a3d2e910001'
                     assert db.execute('SELECT COUNT(*) FROM transactions').fetchone()[0] == 1
                     assert db.execute('SELECT amount_minor FROM transactions WHERE id=?', (record_id,)).fetchone()[0] == 321
