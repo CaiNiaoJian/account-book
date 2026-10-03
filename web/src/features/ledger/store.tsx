@@ -23,6 +23,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -41,12 +42,17 @@ import {
   type Tag,
 } from '@/lib/api'
 import { registerCurrencies } from '@/lib/format'
+import { LEDGER_RESOURCES, loadResources, readTask, type LedgerResource, type ResourceState } from './loading'
 
-export type LedgerStatus = 'loading' | 'ready' | 'error'
+export type LedgerStatus = 'loading' | 'ready' | 'partial' | 'error'
 
 interface LedgerContextValue {
   status: LedgerStatus
   error: string | null
+  loadErrors: Partial<Record<LedgerResource, string>>
+  resourceStates: Record<LedgerResource, ResourceState>
+  refreshing: boolean
+  retryFailed: () => Promise<void>
   enums: Enums | null
   currencies: Currency[]
   overview: AccountOverview | null
@@ -85,7 +91,14 @@ function flatten(nodes: CategoryNode[], out: Category[] = []): Category[] {
 
 export function LedgerProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<LedgerStatus>('loading')
-  const [error, setError] = useState<string | null>(null)
+  const [loadErrors, setLoadErrors] = useState<Partial<Record<LedgerResource, string>>>({})
+  const [resourceStates, setResourceStates] = useState<Record<LedgerResource, ResourceState>>(
+    () => Object.fromEntries(LEDGER_RESOURCES.map((key) => [key, 'loading'])) as Record<LedgerResource, ResourceState>,
+  )
+  const [refreshing, setRefreshing] = useState(false)
+  const currentRun = useRef<AbortController | null>(null)
+  const loaded = useRef(new Set<LedgerResource>())
+  const failed = useRef(new Set<LedgerResource>())
   const [enums, setEnums] = useState<Enums | null>(null)
   const [currencies, setCurrencies] = useState<Currency[]>([])
   const [overview, setOverview] = useState<AccountOverview | null>(null)
@@ -98,52 +111,55 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [members, setMembers] = useState<Member[]>([])
 
-  const refresh = useCallback(async () => {
-    try {
-      // 全部并发：它们互不依赖，串行只会让首屏多等几个来回。
-      // 标签/项目/成员也放在这里，因为"流水列表要显示标签名""表单要选项目"
-      // 都依赖它们，各自再请求一次只会制造不同步。
-      const [
-        nextEnums,
-        nextCurrencies,
-        nextOverview,
-        nextAccounts,
-        expenseTree,
-        incomeTree,
-        nextTags,
-        nextProjects,
-        nextMembers,
-      ] = await Promise.all([
-        api.enums(),
-        api.currencies(),
-        api.accountsOverview(),
-        api.accounts({ include_archived: true }),
-        api.categoryTree({ kind: 'expense' }),
-        api.categoryTree({ kind: 'income' }),
-        api.tags(),
-        api.projects(),
-        api.members(),
-      ])
-
-      registerCurrencies(nextCurrencies)
-      setEnums(nextEnums)
-      setCurrencies(nextCurrencies)
-      setOverview(nextOverview)
-      setAllAccounts(nextAccounts)
-      setTree({ expense: expenseTree, income: incomeTree })
-      setTags(nextTags)
-      setProjects(nextProjects)
-      setMembers(nextMembers)
-      setError(null)
-      setStatus('ready')
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-      setStatus('error')
-    }
+  const load = useCallback(async (only?: Set<LedgerResource>) => {
+    currentRun.current?.abort()
+    const controller = new AbortController()
+    currentRun.current = controller
+    setRefreshing(true)
+    const tasks = [
+      readTask('enums', (signal) => api.enums(signal), setEnums),
+      readTask('currencies', (signal) => api.currencies(signal), (data) => {
+        registerCurrencies(data)
+        setCurrencies(data)
+      }),
+      readTask('overview', (signal) => api.accountsOverview({}, signal), setOverview),
+      readTask('accounts', (signal) => api.accounts({ include_archived: true }, signal), setAllAccounts),
+      readTask('expenseTree', (signal) => api.categoryTree({ kind: 'expense' }, signal),
+        (expense) => setTree((previous) => ({ ...previous, expense }))),
+      readTask('incomeTree', (signal) => api.categoryTree({ kind: 'income' }, signal),
+        (income) => setTree((previous) => ({ ...previous, income }))),
+      readTask('tags', (signal) => api.tags(signal), setTags),
+      readTask('projects', (signal) => api.projects(signal), setProjects),
+      readTask('members', (signal) => api.members(signal), setMembers),
+    ].filter((task) => !only || only.has(task.key))
+    setResourceStates((previous) => ({ ...previous, ...Object.fromEntries(tasks.map((task) =>
+      [task.key, loaded.current.has(task.key) ? 'ready' : 'loading'])) }))
+    await loadResources(tasks, controller.signal, ({ key, error }) => {
+      if (error !== undefined) failed.current.add(key)
+      else {
+        failed.current.delete(key)
+        loaded.current.add(key)
+        setStatus((previous) => previous === 'loading' ? 'partial' : previous)
+      }
+      setResourceStates((previous) => ({ ...previous, [key]: error === undefined ? 'ready' : 'error' }))
+      setLoadErrors((previous) => {
+        const next = { ...previous }
+        if (error !== undefined) next[key] = error instanceof Error ? error.name : String(error)
+        else delete next[key]
+        return next
+      })
+    })
+    if (controller.signal.aborted) return
+    setRefreshing(false)
+    setStatus(failed.current.size === 0 ? 'ready' : loaded.current.size > 0 ? 'partial' : 'error')
   }, [])
+
+  const refresh = useCallback(() => load(), [load])
+  const retryFailed = useCallback(() => load(new Set(failed.current)), [load])
 
   useEffect(() => {
     void refresh()
+    return () => currentRun.current?.abort()
   }, [refresh])
 
   const categories = useMemo(() => [...flatten(tree.expense), ...flatten(tree.income)], [tree])
@@ -169,7 +185,11 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
   const value = useMemo<LedgerContextValue>(
     () => ({
       status,
-      error,
+      error: Object.keys(loadErrors).length > 0 ? Object.entries(loadErrors).map(([key, message]) => `${key}: ${message}`).join('; ') : null,
+      loadErrors,
+      resourceStates,
+      refreshing,
+      retryFailed,
       enums,
       currencies,
       overview,
@@ -189,7 +209,10 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
     }),
     [
       status,
-      error,
+      loadErrors,
+      resourceStates,
+      refreshing,
+      retryFailed,
       enums,
       currencies,
       overview,

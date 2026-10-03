@@ -385,7 +385,7 @@ interface TagPickerProps {
  */
 export function TagPicker({ value, onChange, allowCreate = true, compact }: TagPickerProps) {
   const { t } = useI18n()
-  const { tags, refresh } = useLedger()
+  const { tags, refresh, resourceStates } = useLedger()
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -417,7 +417,7 @@ export function TagPicker({ value, onChange, allowCreate = true, compact }: TagP
   return (
     <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
       <div className="flex flex-wrap gap-1.5">
-        {tags.length === 0 ? <span className="text-ab-footnote text-label-3">{t('ledger.noTags')}</span> : null}
+        {tags.length === 0 ? <span className="text-ab-footnote text-label-3">{t(resourceStates.tags === 'ready' ? 'ledger.noTags' : 'ledgerLoading.notLoaded')}</span> : null}
         {tags.map((tag) => {
           const active = value.includes(tag.id)
           return (

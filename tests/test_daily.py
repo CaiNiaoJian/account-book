@@ -264,6 +264,78 @@ class TestCalendarMetrics:
 
 
 class TestDayDetail:
+    @pytest.mark.parametrize('direction, expected', [('in', 12345), ('out', -12345)])
+    def test_adjustment_curve_matches_daily_close(self, session, direction, expected):
+        account = _accounts(session)[0]
+        transactions_service.create_transaction(
+            session, type='adjust', direction=direction, account_id=account.id,
+            amount_minor=12345, occurred_at=_at(TODAY, 9),
+        )
+        detail = daily_service.get_day_detail(session, TODAY)
+        assert detail['net_worth_series'][-1]['net_worth_minor'] == expected
+        assert detail['stat']['net_worth_minor'] == expected
+        assert detail['stat']['income_minor'] == detail['stat']['expense_minor'] == 0
+
+    @pytest.mark.parametrize('source_counted, target_counted, expected', [
+        (True, True, 0), (False, False, 0), (True, False, -12345), (False, True, 12345),
+    ])
+    def test_transfer_curve_respects_both_account_flags(self, session, source_counted, target_counted, expected):
+        source, target = _accounts(session)[:2]
+        accounts_service.update_account(session, source.id, include_in_net_worth=source_counted)
+        accounts_service.update_account(session, target.id, include_in_net_worth=target_counted)
+        transactions_service.create_transaction(
+            session, type='transfer', account_id=source.id, to_account_id=target.id,
+            amount_minor=12345, occurred_at=_at(TODAY, 9),
+        )
+        detail = daily_service.get_day_detail(session, TODAY)
+        assert detail['net_worth_series'][-1]['net_worth_minor'] == expected
+        assert detail['stat']['net_worth_minor'] == expected
+        assert sum(item['delta_minor'] for item in detail['contributions']) == expected
+
+    def test_excluded_foreign_void_and_deleted_entries_do_not_change_curve(self, session):
+        counted, excluded = _accounts(session)[:2]
+        accounts_service.update_account(session, excluded.id, include_in_net_worth=False)
+        foreign = accounts_service.create_account(session, name='美元', type='cash', currency='USD')
+        for account, status, deleted in [
+            (excluded, 'cleared', False), (foreign, 'cleared', False),
+            (counted, 'void', False), (counted, 'cleared', True),
+        ]:
+            row = transactions_service.create_transaction(
+                session, type='expense', account_id=account.id, amount_minor=12345,
+                status=status, occurred_at=_at(TODAY, 9),
+            )
+            if deleted:
+                transactions_service.delete_transaction(session, row.id)
+        detail = daily_service.get_day_detail(session, TODAY)
+        assert detail['net_worth_series'][-1]['net_worth_minor'] == detail['stat']['net_worth_minor'] == 0
+        assert detail['contributions'] == []
+        assert sum(item['amount_minor'] for item in detail['composition']) == detail['stat']['expense_minor'] == 12345
+
+    def test_mixed_day_curve_closes_at_the_same_net_worth_after_flag_change(self, session):
+        source, target = _accounts(session)[:2]
+        accounts_service.update_account(session, source.id, initial_balance_minor=100000)
+        accounts_service.update_account(session, target.id, initial_balance_minor=10000)
+        transactions_service.create_transaction(
+            session, type='income', account_id=source.id, amount_minor=10000,
+            occurred_at=_at(TODAY - timedelta(days=1), 8),
+        )
+        for hour, kind, account, to_account, direction, amount, status in [
+            (8, 'income', source, None, 'in', 20000, 'cleared'),
+            (9, 'adjust', source, None, 'out', 1000, 'cleared'),
+            (10, 'transfer', source, target, 'out', 30000, 'cleared'),
+            (11, 'expense', target, None, 'out', 500, 'cleared'),
+            (12, 'expense', source, None, 'out', 400, 'void'),
+        ]:
+            transactions_service.create_transaction(
+                session, type=kind, account_id=account.id, to_account_id=to_account.id if to_account else None,
+                direction=direction, amount_minor=amount, status=status, occurred_at=_at(TODAY, hour),
+            )
+        for included, expected in [(True, 138500), (False, 99000), (True, 138500)]:
+            accounts_service.update_account(session, target.id, include_in_net_worth=included)
+            detail = daily_service.get_day_detail(session, TODAY)
+            assert detail['net_worth_series'][-1]['net_worth_minor'] == detail['stat']['net_worth_minor'] == expected
+            assert detail['stat']['opening_net_worth_minor'] + sum(row['delta_minor'] for row in detail['contributions']) == expected
+
     def test_ladder_curve_follows_real_timestamps(self, session: Session) -> None:
         """余额阶梯曲线的拐点必须落在流水真实发生的那一刻。"""
         _spend(session, day=TODAY, amount=1_000, hour=9)

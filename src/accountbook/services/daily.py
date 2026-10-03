@@ -533,9 +533,13 @@ def get_day_detail(session: Session, day: date) -> dict[str, Any]:
         {"at": f"{day.isoformat()}T00:00:00", "net_worth_minor": opening, "label": "opening"}
     ]
     running = opening
+    counted_accounts = {
+        account.id for account in _active_accounts(session)
+        if account.include_in_net_worth and account.currency == DEFAULT_CURRENCY
+    }
     contributions: list[dict[str, Any]] = []
     for transaction in transactions:
-        delta = _net_worth_delta(transaction)
+        delta = _net_worth_delta(transaction, counted_accounts)
         if delta == 0:
             continue
         running += delta
@@ -981,22 +985,28 @@ def _net_worth_at(session: Session, day: date) -> int:
     )
 
 
-def _net_worth_delta(transaction: Transaction) -> int:
+def _net_worth_delta(transaction: Transaction, counted_accounts: set[int]) -> int:
     """单笔流水对**总净值**的影响。
 
-    转账与校准不改变总净值（钱只是换个口袋），因此贡献为 0 ——
-    否则日内曲线会因为一次账户间划转而出现虚假的尖峰。
+    与日终余额聚合同口径：源账户按方向变化，转入账户增加。
+    两端都计入净资产的转账相抵；跨统计范围的转账和余额校准会改变净值。
+    counted_accounts 只含有效、计入净资产的人民币账户。
     """
-    if transaction.currency != DEFAULT_CURRENCY or transaction.type in {
-        item.value for item in TRANSFER_TYPES
-    }:
+    if transaction.status == TransactionStatus.VOID.value or transaction.deleted_at is not None:
         return 0
-    return transaction.amount_minor if transaction.direction == "in" else -transaction.amount_minor
+    delta = 0
+    if transaction.account_id in counted_accounts:
+        delta += transaction.amount_minor if transaction.direction == "in" else -transaction.amount_minor
+    if transaction.to_account_id in counted_accounts:
+        delta += transaction.amount_minor
+    return delta
 
 
 def _day_composition(transactions: list[Transaction]) -> list[tuple[int | None, int]]:
     totals: dict[int | None, int] = defaultdict(int)
     for transaction in transactions:
+        if transaction.status == TransactionStatus.VOID.value:
+            continue
         if transaction.currency != DEFAULT_CURRENCY or transaction.type != TransactionType.EXPENSE.value:
             continue
         if transaction.splits:

@@ -27,7 +27,7 @@ const COLOR_CHOICES = ['accent', 'orange', 'yellow', 'green', 'teal', 'indigo', 
 
 export function CategoriesPage() {
   const { t } = useI18n()
-  const { status, tree, categories, refresh } = useLedger()
+  const { resourceStates, tree, categories, refresh } = useLedger()
   const [kind, setKind] = useState<'expense' | 'income'>('expense')
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const [dialog, setDialog] = useState<
@@ -265,7 +265,7 @@ export function CategoriesPage() {
     )
   }
 
-  if (status === 'loading') {
+  if (resourceStates.expenseTree === 'loading' && resourceStates.incomeTree === 'loading') {
     return (
       <div className="space-y-3">
         <Skeleton className="h-9 w-64" />
@@ -275,6 +275,8 @@ export function CategoriesPage() {
       </div>
     )
   }
+
+  const unavailable = nodes.length === 0 && resourceStates[kind === 'expense' ? 'expenseTree' : 'incomeTree'] !== 'ready'
 
   return (
     <div className="space-y-4">
@@ -289,7 +291,7 @@ export function CategoriesPage() {
             ]}
           />
           <span className="text-ab-footnote text-label-3">
-            {t('ledger.categoryCount', { count })}
+            {unavailable ? '—' : t('ledger.categoryCount', { count })}
           </span>
         </div>
         <button type="button" className="ab-btn-primary" onClick={() => openCreate(null)}>
@@ -300,7 +302,7 @@ export function CategoriesPage() {
 
       {nodes.length === 0 ? (
         <Card flush>
-          <EmptyState icon="categories" title={t('ledger.noCategoriesTitle')} body={t('ledger.noCategoriesBody')} />
+          <EmptyState icon="categories" title={t(unavailable ? 'nav.categories' : 'ledger.noCategoriesTitle')} body={t(unavailable ? 'ledgerLoading.notLoaded' : 'ledger.noCategoriesBody')} />
         </Card>
       ) : (
         <Card flush className="overflow-hidden">

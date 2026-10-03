@@ -5,6 +5,7 @@
   "type": "module",
   "description": "AccountBook Desktop 前端渲染层（React + TypeScript + Vite + Tailwind + ECharts）",
   "scripts": {
+    "test:loading": "node --test tests/ledger-loading.test.mjs",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",

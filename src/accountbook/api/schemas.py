@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -1357,6 +1357,12 @@ class PayrollFillIn(RequestModel):
     create_transaction: bool = True
     transaction_id: int | None = None
     occurred_at: datetime | None = None
+    pay_date: date | None = None
+    overrides: dict[int, Annotated[int, Field(strict=True, ge=0, le=9_007_199_254_740_991)]] | None = None
+    # 无组成模板时也可直接填写当月工资；有模板时按快照逐项覆盖。
+    gross_minor: int | None = Field(default=None, strict=True, ge=0, le=9_007_199_254_740_991)
+    tax_minor: int | None = Field(default=None, strict=True, ge=0, le=9_007_199_254_740_991)
+    insurance_minor: int | None = Field(default=None, strict=True, ge=0, le=9_007_199_254_740_991)
 
 
 class PayrollSkipIn(RequestModel):

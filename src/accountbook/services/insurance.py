@@ -197,7 +197,14 @@ def list_items(
         statement = statement.where((InsuranceItem.city == city) | (InsuranceItem.city == ""))
     if not include_disabled:
         statement = statement.where(InsuranceItem.enabled.is_(True))
-    return list(session.scalars(statement.order_by(InsuranceItem.sort_order, InsuranceItem.id)).all())
+    rows = list(session.scalars(statement.order_by(InsuranceItem.sort_order, InsuranceItem.id)).all())
+    if city:
+        # 同险种的城市配置覆盖通用配置，包括停用；避免同一项被重复计算。
+        local_kinds = {
+            row.kind for row in session.scalars(select(InsuranceItem).where(InsuranceItem.city == city))
+        }
+        rows = [row for row in rows if row.city == city or row.kind not in local_kinds]
+    return rows
 
 
 def get_item(session: Session, item_id: int) -> InsuranceItem:

@@ -17,7 +17,7 @@
  * * 发薪日要标出置信度（`inferred` 是默认值、`assumed` 是节假日未录入）。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Chart } from '@/components/Chart'
 import { Icon } from '@/components/Icon'
@@ -39,7 +39,8 @@ import {
   type PayrollOverview,
   type PayrollRecord,
 } from '@/lib/api'
-import { displayMinor, formatDayLabel } from '@/lib/format'
+import { displayMinor, formatDayLabel, formatMinor, parseAmountToMinor } from '@/lib/format'
+import { PaydayDialog } from '@/features/payroll/PaydayDialog'
 
 import { Modal } from '@/features/ledger/parts'
 import { useLedger } from '@/features/ledger/store'
@@ -300,7 +301,7 @@ function donutOption(
 export function PayrollPage() {
   const { t } = useI18n()
   const { preferences } = usePreferences()
-  const { accounts } = useLedger()
+  const { accounts, refresh } = useLedger()
   const privacy = preferences.privacy_mode
 
   const [period, setPeriod] = useState(currentPeriod)
@@ -315,6 +316,8 @@ export function PayrollPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [sourceOpen, setSourceOpen] = useState(false)
+  const [editingSource, setEditingSource] = useState<PaySource | null>(null)
+  const [paydayOpen, setPaydayOpen] = useState(false)
   const [componentOpen, setComponentOpen] = useState(false)
   const [fillFor, setFillFor] = useState<PayrollRecord | null>(null)
   const [insuranceOpen, setInsuranceOpen] = useState(false)
@@ -385,18 +388,21 @@ export function PayrollPage() {
   // 切换来源时只重算该来源的数据
   useEffect(() => {
     if (sourceId === null) return
+    let cancelled = false
     void (async () => {
       try {
         const [computed, date] = await Promise.all([
           api.computePayroll(sourceId),
           api.payDate(sourceId, period),
         ])
+        if (cancelled) return
         setCompute(computed)
         setPayday(date)
       } catch (cause) {
-        setError(cause instanceof ApiError ? cause.detail : String(cause))
+        if (!cancelled) setError(cause instanceof ApiError ? cause.detail : String(cause))
       }
     })()
+    return () => { cancelled = true }
   }, [sourceId, period])
 
   /** 本期的草稿：它们**不计入**上面的应发/实发（那笔钱还没到账） */
@@ -431,9 +437,10 @@ export function PayrollPage() {
   const createRecord = async () => {
     if (sourceId === null) return
     try {
-      await api.createPayrollRecord({ source_id: sourceId, period })
+      const created = await api.createPayrollRecord({ source_id: sourceId, period })
       setNotice(t('payroll.recordCreated', { period }))
       await load()
+      setFillFor(created)
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.detail : String(cause))
     }
@@ -514,6 +521,14 @@ export function PayrollPage() {
               </button>
             ))}
             {sourceId !== null ? (
+              <button type="button" className="ab-chip" onClick={() => {
+                setEditingSource(sources?.find((source) => source.id === sourceId) ?? null)
+                setSourceOpen(true)
+              }}>
+                <Icon name="edit" size={11} />{t('payroll.editSource')}
+              </button>
+            ) : null}
+            {sourceId !== null ? (
               <button
                 type="button"
                 className="ab-chip"
@@ -533,6 +548,8 @@ export function PayrollPage() {
                 <div className="ab-tnum text-ab-subhead text-label">
                   {payday ? formatDayLabel(payday.pay_date) : '—'}
                 </div>
+                <button type="button" className="mt-1 text-ab-footnote text-accent" disabled={sourceId === null}
+                  onClick={() => setPaydayOpen(true)}>{t('payroll.editPayday')}</button>
               </div>
               {payday ? (
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -818,14 +835,23 @@ export function PayrollPage() {
 
       <SourceDialog
         open={sourceOpen}
-        accounts={accounts}
-        onClose={() => setSourceOpen(false)}
+        source={editingSource}
+        accounts={accounts.filter((account) => account.currency === 'CNY')}
+        onClose={() => { setSourceOpen(false); setEditingSource(null) }}
         onDone={async () => {
           setSourceOpen(false)
-          setNotice(t('payroll.sourceCreated'))
+          setEditingSource(null)
+          setNotice(t(editingSource ? 'payroll.sourceSaved' : 'payroll.sourceCreated'))
           await load()
         }}
       />
+
+      <PaydayDialog open={paydayOpen} sourceId={sourceId}
+        onClose={() => setPaydayOpen(false)} onDone={async () => {
+          setPaydayOpen(false)
+          setNotice(t('payroll.paydaySaved'))
+          await load()
+        }} />
 
       <ComponentDialog
         open={componentOpen}
@@ -839,11 +865,12 @@ export function PayrollPage() {
 
       <FillDialog
         record={fillFor}
+        onRecompute={setFillFor}
         onClose={() => setFillFor(null)}
         onDone={async () => {
           setFillFor(null)
           setNotice(t('payroll.filled'))
-          await load()
+          await Promise.all([load(), refresh()])
         }}
       />
 
@@ -865,11 +892,13 @@ export function PayrollPage() {
 // -----------------------------------------------------------------------------
 function SourceDialog({
   open,
+  source,
   accounts,
   onClose,
   onDone,
 }: {
   open: boolean
+  source: PaySource | null
   accounts: { id: number; name: string }[]
   onClose: () => void
   onDone: () => void
@@ -883,22 +912,24 @@ function SourceDialog({
 
   useEffect(() => {
     if (open) {
-      setName('')
-      setEmployer('')
-      setAccountId(accounts[0] ? String(accounts[0].id) : '')
+      setName(source?.name ?? '')
+      setEmployer(source?.employer ?? '')
+      setAccountId(source ? String(source.account_id ?? '') : (accounts[0] ? String(accounts[0].id) : ''))
       setError(null)
     }
-  }, [open, accounts])
+  }, [open, source])
 
   const submit = async () => {
     setBusy(true)
     setError(null)
     try {
-      await api.createPayrollSource({
+      const payload = {
         name,
         employer,
         account_id: accountId ? Number(accountId) : null,
-      })
+      }
+      if (source) await api.updatePayrollSource(source.id, payload)
+      else await api.createPayrollSource(payload)
       onDone()
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.detail : String(cause))
@@ -910,14 +941,14 @@ function SourceDialog({
   return (
     <Modal
       open={open}
-      title={t('payroll.newSource')}
-      onClose={onClose}
+      title={t(source ? 'payroll.editSource' : 'payroll.newSource')}
+      onClose={() => { if (!busy) onClose() }}
       footer={
         <>
           <button type="button" className="ab-btn-secondary" onClick={onClose}>
             {t('common.cancel')}
           </button>
-          <button type="button" className="ab-btn-primary" disabled={busy} onClick={() => void submit()}>
+          <button type="button" className="ab-btn-primary" disabled={busy || !name.trim()} onClick={() => void submit()}>
             {t('common.save')}
           </button>
         </>
@@ -990,6 +1021,7 @@ function ComponentDialog({
   const { t } = useI18n()
   const { preferences } = usePreferences()
   const [items, setItems] = useState<PayComponentRow[]>([])
+  const [editingId, setEditingId] = useState<number | null>(null)
   const [name, setName] = useState('')
   const [kind, setKind] = useState('basic')
   const [sign, setSign] = useState<1 | -1>(1)
@@ -1007,7 +1039,18 @@ function ComponentDialog({
   }, [sourceId])
 
   useEffect(() => {
-    if (open) void load()
+    if (open) {
+      setEditingId(null)
+      setName('')
+      setAmount('')
+      setRate('')
+      setKind('basic')
+      setSign(1)
+      setCalc('fixed')
+      setBaseKey('basic')
+      setError(null)
+      void load().catch((cause) => setError(cause instanceof ApiError ? cause.detail : String(cause)))
+    }
   }, [open, load])
 
   const add = async () => {
@@ -1015,17 +1058,24 @@ function ComponentDialog({
     setBusy(true)
     setError(null)
     try {
-      await api.createPayrollComponent({
+      const amountMinor = calc === 'fixed' ? nonnegativeAmount(amount) : 0
+      const rateBps = calc === 'ratio' ? nonnegativeAmount(rate) : 0
+      if (amountMinor === null || rateBps === null || rateBps > 100000) {
+        setError(t('payroll.invalidComponentAmount'))
+        return
+      }
+      const payload = {
         name,
         kind,
         sign,
         calc,
-        source_id: sourceId,
-        amount_minor: calc === 'fixed' ? Math.round(Number(amount || '0') * 100) : 0,
-        rate_bps: calc === 'ratio' ? Math.round(Number(rate || '0') * 100) : 0,
+        amount_minor: amountMinor,
+        rate_bps: rateBps,
         base_key: baseKey,
-        sort_order: sign === 1 ? 1 : 9,
-      })
+      }
+      if (editingId !== null) await api.updatePayrollComponent(editingId, payload)
+      else await api.createPayrollComponent({ ...payload, source_id: sourceId, sort_order: sign === 1 ? 1 : 9 })
+      setEditingId(null)
       setName('')
       setAmount('')
       setRate('')
@@ -1076,13 +1126,25 @@ function ComponentDialog({
                       : `${(item.rate_bps / 100).toFixed(2)}% × ${t(`payroll.baseKey.${item.base_key}`)}`}
                   </span>
                 </span>
+                {item.calc !== 'formula' ? <button type="button" className="ab-btn-secondary" disabled={busy}
+                  onClick={() => {
+                    setEditingId(item.id); setName(item.name); setKind(item.kind); setSign(item.sign)
+                    setCalc(item.calc as 'fixed' | 'ratio'); setAmount(editableAmount(item.amount_minor))
+                    setRate(editableAmount(item.rate_bps)); setBaseKey(item.base_key); setError(null)
+                  }}>{t('payroll.editComponent')}</button> : null}
                 <button
                   type="button"
                   className="ab-icon-btn shrink-0 hover:text-negative"
                   aria-label={t('common.delete')}
+                  disabled={busy}
                   onClick={async () => {
-                    await api.deletePayrollComponent(item.id)
-                    await load()
+                    setBusy(true)
+                    try {
+                      await api.deletePayrollComponent(item.id)
+                      if (editingId === item.id) { setEditingId(null); setName(''); setAmount(''); setRate('') }
+                      await load()
+                    } catch (cause) { setError(cause instanceof ApiError ? cause.detail : String(cause)) }
+                    finally { setBusy(false) }
                   }}
                 >
                   <Icon name="trash" size={12} />
@@ -1132,7 +1194,7 @@ function ComponentDialog({
                 type="button"
                 className="ab-chip"
                 data-active={sign === value}
-                onClick={() => setSign(value)}
+                onClick={() => { setSign(value); setBaseKey(value === -1 ? 'gross' : 'basic') }}
               >
                 {value === 1 ? t('payroll.addOn') : t('payroll.deduction')}
               </button>
@@ -1201,12 +1263,14 @@ function ComponentDialog({
           <button
             type="button"
             className="ab-btn-secondary"
-            disabled={busy || !name}
+            disabled={busy || !name.trim()}
             onClick={() => void add()}
           >
-            <Icon name="plus" size={13} />
-            {t('payroll.addComponent')}
+            <Icon name={editingId === null ? 'plus' : 'check'} size={13} />
+            {t(editingId === null ? 'payroll.addComponent' : 'common.save')}
           </button>
+          {editingId !== null ? <button type="button" className="ab-btn-secondary ml-2" disabled={busy}
+            onClick={() => { setEditingId(null); setName(''); setAmount(''); setRate('') }}>{t('common.cancel')}</button> : null}
           <p className="text-ab-caption1 text-label-3">{t('payroll.componentHint')}</p>
         </div>
       </div>
@@ -1240,12 +1304,23 @@ const COMPONENT_KINDS = [
   'other',
 ]
 
+function editableAmount(minor: number): string {
+  return formatMinor(minor, 'CNY', { showSymbol: false }).replaceAll(',', '')
+}
+
+function nonnegativeAmount(text: string): number | null {
+  const value = parseAmountToMinor(text)
+  return value !== null && Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
 function FillDialog({
   record,
+  onRecompute,
   onClose,
   onDone,
 }: {
   record: PayrollRecord | null
+  onRecompute: (record: PayrollRecord) => void
   onClose: () => void
   onDone: () => void
 }) {
@@ -1255,23 +1330,42 @@ function FillDialog({
   const [error, setError] = useState<string | null>(null)
   const [skipReason, setSkipReason] = useState('')
   const [showSkip, setShowSkip] = useState(false)
+  const [amounts, setAmounts] = useState<Record<number, string>>({})
+  const [gross, setGross] = useState('0.00')
+  const [tax, setTax] = useState('0.00')
+  const [insurance, setInsurance] = useState('0.00')
+  const [payDate, setPayDate] = useState('')
 
   useEffect(() => {
     setError(null)
     setSkipReason('')
     setShowSkip(false)
+    setAmounts(Object.fromEntries((record?.items ?? []).map((item) => [item.component_id, editableAmount(item.amount_minor)])))
+    setGross(editableAmount(record?.gross_minor ?? 0))
+    setTax(editableAmount(record?.tax_minor ?? 0))
+    setInsurance(editableAmount(record?.insurance_minor ?? 0))
+    setPayDate(record?.pay_date ?? '')
   }, [record])
 
   const money = (minor: number) => displayMinor(minor, 'CNY', preferences.privacy_mode)
+  const hasItems = (record?.items.length ?? 0) > 0
+  const parsed = Object.fromEntries(Object.entries(amounts).map(([id, text]) => [id, nonnegativeAmount(text)]))
+  const grossMinor = hasItems ? (record?.items ?? []).filter((item) => item.direction === 'add')
+    .reduce((sum, item) => sum + (parsed[item.component_id] ?? NaN), 0) : (nonnegativeAmount(gross) ?? NaN)
+  const deductedMinor = hasItems ? (record?.items ?? []).filter((item) => item.direction === 'deduct')
+    .reduce((sum, item) => sum + (parsed[item.component_id] ?? NaN), 0)
+    : (nonnegativeAmount(tax) ?? NaN) + (nonnegativeAmount(insurance) ?? NaN)
+  const netMinor = grossMinor - deductedMinor
+  const validAmounts = Number.isSafeInteger(grossMinor) && Number.isSafeInteger(deductedMinor) && netMinor >= 0
 
   return (
     <Modal
       open={record !== null}
       title={t('payroll.fillTitle', { period: record?.period ?? '' })}
-      onClose={onClose}
+      onClose={() => { if (!busy) onClose() }}
       footer={
         <>
-          <button type="button" className="ab-btn-secondary" onClick={onClose}>
+          <button type="button" className="ab-btn-secondary" disabled={busy} onClick={onClose}>
             {t('common.cancel')}
           </button>
           {/* **跳过是必须存在的出口**：只有"必须填"会让真的没工资的月份变成死锁，
@@ -1290,9 +1384,17 @@ function FillDialog({
             disabled={busy}
             onClick={async () => {
               if (!record) return
+              setError(null)
+              if (!validAmounts) { setError(t('payroll.invalidAmounts')); return }
+              if (!payDate) { setError(t('payroll.dateRequired')); return }
               setBusy(true)
               try {
-                await api.fillPayrollRecord(record.id, { create_transaction: true })
+                await api.fillPayrollRecord(record.id, {
+                  create_transaction: true, pay_date: payDate,
+                  ...(hasItems ? { overrides: parsed as Record<number, number> } : {
+                    gross_minor: grossMinor, tax_minor: nonnegativeAmount(tax)!, insurance_minor: nonnegativeAmount(insurance)!,
+                  }),
+                })
                 onDone()
               } catch (cause) {
                 setError(cause instanceof ApiError ? cause.detail : String(cause))
@@ -1318,29 +1420,54 @@ function FillDialog({
           <>
             <div className="grid gap-3 sm:grid-cols-3">
               {[
-                [t('payroll.gross'), record.gross_minor],
-                [t('payroll.insuranceDeduct'), record.insurance_minor],
-                [t('payroll.net'), record.net_minor],
+                [t('payroll.gross'), grossMinor],
+                [t('payroll.deductionTotal'), deductedMinor],
+                [t('payroll.net'), netMinor],
               ].map(([label, value]) => (
                 <div key={String(label)}>
                   <div className="text-ab-caption1 text-label-3">{label}</div>
-                  <div className="ab-tnum text-ab-subhead text-label">{money(Number(value))}</div>
+                  <div className="ab-tnum text-ab-subhead text-label">{Number.isFinite(Number(value)) ? money(Number(value)) : '—'}</div>
                 </div>
               ))}
             </div>
 
-            <div className="space-y-1 border-t border-separator/60 pt-2">
-              {record.items.map((item) => (
+            <div>
+              <label className="ab-field-label" htmlFor="fill-pay-date">{t('payroll.actualPayDate')}</label>
+              <input id="fill-pay-date" type="date" className="ab-input" value={payDate} disabled={busy}
+                onChange={(event) => setPayDate(event.target.value)} />
+            </div>
+            <p className="text-ab-caption1 text-label-3">{t('payroll.actualAmountsHint')}</p>
+            <div>
+              <button type="button" className="ab-btn-secondary" disabled={busy} onClick={async () => {
+                setBusy(true); setError(null)
+                try { onRecompute(await api.recomputePayrollRecord(record.id)) }
+                catch (cause) { setError(cause instanceof ApiError ? cause.detail : String(cause)) }
+                finally { setBusy(false) }
+              }}>{t('payroll.reloadComponents')}</button>
+              <p className="mt-1 text-ab-caption1 text-label-3">{t('payroll.reloadComponentsHint')}</p>
+            </div>
+            <div className="space-y-2 border-t border-separator/60 pt-2">
+              {hasItems ? record.items.map((item) => (
                 <div key={item.component_id} className="flex items-center gap-2 text-ab-footnote">
-                  <span className="min-w-0 flex-1 truncate text-label-2">{item.name}</span>
+                  <label htmlFor={`fill-item-${item.component_id}`} className="min-w-0 flex-1 truncate text-label-2">{item.name}</label>
                   <span
                     className={`ab-tnum ${item.direction === 'add' ? 'text-positive' : 'text-negative'}`}
                   >
                     {item.direction === 'add' ? '+' : '−'}
-                    {money(item.amount_minor)}
                   </span>
+                  <input id={`fill-item-${item.component_id}`} className="ab-input ab-tnum !w-36" inputMode="decimal"
+                    value={amounts[item.component_id] ?? ''} disabled={busy}
+                    onChange={(event) => setAmounts({ ...amounts, [item.component_id]: event.target.value })} />
                 </div>
-              ))}
+              )) : [
+                { id: 'fill-gross', label: t('payroll.gross'), value: gross, set: setGross },
+                { id: 'fill-tax', label: t('payroll.tax'), value: tax, set: setTax },
+                { id: 'fill-insurance', label: t('payroll.insuranceDeduct'), value: insurance, set: setInsurance },
+              ].map((field) => <div key={field.id}>
+                <label htmlFor={field.id} className="ab-field-label">{field.label}</label>
+                <input id={field.id} className="ab-input ab-tnum" inputMode="decimal" value={field.value} disabled={busy}
+                  onChange={(event) => field.set(event.target.value)} />
+              </div>)}
             </div>
             <p className="text-ab-caption1 text-label-3">{t('payroll.postHint')}</p>
 
@@ -1414,22 +1541,30 @@ function InsuranceDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [editingProfile, setEditingProfile] = useState<InsuranceProfile | null>(null)
+  const loadVersion = useRef(0)
 
   const load = useCallback(async () => {
-    const [itemList, profileList] = await Promise.all([
-      api.insuranceItems(),
-      api.insuranceProfiles(),
-    ])
-    setItems(itemList.items)
+    const version = ++loadVersion.current
+    setComputed(null)
+    setStatement(null)
+    setWithdrawals([])
+    const profileList = await api.insuranceProfiles()
+    if (version !== loadVersion.current) return
     setProfiles(profileList.items)
     const chosen = profileId ?? profileList.items[0]?.id ?? null
     setProfileId(chosen)
+    const city = profileList.items.find((profile) => profile.id === chosen)?.city ?? ''
+    const itemList = await api.insuranceItems(city)
+    if (version !== loadVersion.current) return
+    setItems(itemList.items)
     if (chosen !== null) {
       const [c, s, w] = await Promise.all([
         api.computeInsurance(chosen),
         api.insuranceStatement(chosen, Number(period.slice(0, 4))),
         api.insuranceWithdrawals(chosen),
       ])
+      if (version !== loadVersion.current) return
       setComputed(c)
       setStatement(s)
       setWithdrawals(w.items as unknown as InsuranceWithdrawal[])
@@ -1437,14 +1572,14 @@ function InsuranceDialog({
   }, [profileId, period])
 
   useEffect(() => {
-    if (open) void load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, period])
+    if (open) void load().catch((cause) => setError(cause instanceof ApiError ? cause.detail : String(cause)))
+    return () => { loadVersion.current += 1 }
+  }, [open, load])
 
   const ensure = async () => {
     setBusy(true)
     try {
-      await api.ensureInsuranceItems()
+      await api.ensureInsuranceItems(profiles.find((profile) => profile.id === profileId)?.city ?? '')
       await load()
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.detail : String(cause))
@@ -1453,14 +1588,22 @@ function InsuranceDialog({
     }
   }
 
-  const saveRate = async (kind: string, personal: string, employer: string) => {
+  const saveRate = async (item: InsuranceItem, personal: string, employer: string, enabled: boolean) => {
     setBusy(true)
     setError(null)
     try {
+      const personalRate = nonnegativeAmount(personal.trim() || '0')
+      const employerRate = nonnegativeAmount(employer.trim() || '0')
+      if (personalRate === null || employerRate === null || personalRate > 10000 || employerRate > 10000) {
+        setError(t('payroll.invalidRate')); return
+      }
+      if (enabled && personalRate === 0 && employerRate === 0) {
+        setError(t('payroll.zeroRateHint')); return
+      }
       await api.upsertInsuranceItem({
-        kind,
-        personal_rate_bps: Math.round(Number(personal || '0') * 100),
-        employer_rate_bps: Math.round(Number(employer || '0') * 100),
+        kind: item.kind, city: item.city, enabled,
+        personal_rate_bps: personalRate,
+        employer_rate_bps: employerRate,
       })
       await load()
     } catch (cause) {
@@ -1513,11 +1656,16 @@ function InsuranceDialog({
             <button
               type="button"
               className="ab-chip ml-auto"
-              onClick={() => setProfileOpen(true)}
+              onClick={() => { setEditingProfile(null); setProfileOpen(true) }}
             >
               <Icon name="plus" size={11} />
               {t('payroll.newProfile')}
             </button>
+            {profileId !== null ? <button type="button" className="ab-chip" disabled={busy}
+              onClick={() => {
+                setEditingProfile(profiles.find((profile) => profile.id === profileId) ?? null)
+                setProfileOpen(true)
+              }}>{t('payroll.editProfile')}</button> : null}
           </div>
           {profiles.length === 0 ? (
             <p className="mt-1 text-ab-footnote text-label-3">{t('payroll.noProfile')}</p>
@@ -1541,7 +1689,7 @@ function InsuranceDialog({
         {computed ? (
           <div className="space-y-2 border-t border-separator/60 pt-3">
             {/* **"未填比例"与"缴得少"必须区分开** */}
-            {computed.incomplete ? (
+            {computed.incomplete && computed.unfilled_items.length > 0 ? (
               <p className="rounded-ab-sm bg-warning/10 px-3 py-2 text-ab-caption1 text-label-2">
                 {t('payroll.incomplete', { items: computed.unfilled_items.slice(0, 4).join('、') })}
               </p>
@@ -1683,7 +1831,9 @@ function InsuranceDialog({
             )}
 
             <WithdrawalForm
-              items={computed?.items ?? []}
+              key={profileId}
+              items={items.filter((item) => item.personal_to_account || item.employer_to_account)
+                .map((item) => ({ item_id: item.id, kind: item.kind, name: item.name }))}
               busy={busy}
               error={error}
               onSubmit={async (payload) => {
@@ -1693,10 +1843,12 @@ function InsuranceDialog({
                 try {
                   await api.addInsuranceWithdrawal({ profile_id: profileId, ...payload })
                   await load()
+                  return true
                 } catch (cause) {
                   // 余额不足是 409，要把后端给的数字原样显示出来 ——
                   // 只说"操作失败"会让用户不知道该改什么
                   setError(cause instanceof ApiError ? cause.detail : String(cause))
+                  return false
                 } finally {
                   setBusy(false)
                 }
@@ -1735,9 +1887,11 @@ function InsuranceDialog({
 
       <ProfileDialog
         open={profileOpen}
+        profile={editingProfile}
         onClose={() => setProfileOpen(false)}
-        onDone={async () => {
+        onDone={async (saved) => {
           setProfileOpen(false)
+          setProfileId(saved.id)
           await load()
         }}
       />
@@ -1766,22 +1920,23 @@ function WithdrawalForm({
   error,
   onSubmit,
 }: {
-  items: { item_id: number; kind: string; name: string; to_account_minor: number }[]
+  items: { item_id: number; kind: string; name: string }[]
   busy: boolean
   error: string | null
-  onSubmit: (payload: Record<string, unknown>) => Promise<void>
+  onSubmit: (payload: Record<string, unknown>) => Promise<boolean | undefined>
 }) {
   const { t } = useI18n()
-  const eligible = items.filter((item) => item.to_account_minor > 0)
+  const eligible = items
   const [itemId, setItemId] = useState('')
   const [amount, setAmount] = useState('')
   const [day, setDay] = useState(() => new Date().toISOString().slice(0, 10))
   const [reason, setReason] = useState('purchase')
+  const amountMinor = nonnegativeAmount(amount)
 
   useEffect(() => {
-    if (!itemId && eligible.length > 0) setItemId(String(eligible[0]!.item_id))
+    if (!eligible.some((item) => String(item.item_id) === itemId)) setItemId(String(eligible[0]?.item_id ?? ''))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eligible.length])
+  }, [eligible.map((item) => item.item_id).join(',')])
 
   if (eligible.length === 0) {
     return <p className="text-ab-caption1 text-label-3">{t('payroll.noWithdrawableAccount')}</p>
@@ -1834,21 +1989,23 @@ function WithdrawalForm({
         <button
           type="button"
           className="ab-btn-secondary shrink-0"
-          disabled={busy || !amount || !itemId}
-          onClick={() =>
-            void onSubmit({
+          disabled={busy || amountMinor === null || amountMinor <= 0 || !itemId || !day}
+          onClick={async () => {
+            const saved = await onSubmit({
               item_id: Number(itemId),
-              amount_minor: Math.round(Number(amount) * 100),
+              amount_minor: amountMinor,
               occurred_at: day,
               reason,
             })
-          }
+            if (saved) setAmount('')
+          }}
         >
           <Icon name="plus" size={12} />
           {t('payroll.addWithdrawal')}
         </button>
       </div>
       {error ? <p className="text-ab-caption1 text-negative">{error}</p> : null}
+      {amount && (amountMinor === null || amountMinor <= 0) ? <p className="text-ab-caption1 text-negative">{t('payroll.positiveAmount')}</p> : null}
       <p className="text-ab-caption1 text-label-3">{t('payroll.withdrawHint')}</p>
     </div>
   )
@@ -1861,11 +2018,17 @@ function RateRow({
 }: {
   item: InsuranceItem
   busy: boolean
-  onSave: (kind: string, personal: string, employer: string) => Promise<void>
+  onSave: (item: InsuranceItem, personal: string, employer: string, enabled: boolean) => Promise<void>
 }) {
   const { t } = useI18n()
   const [personal, setPersonal] = useState(item.personal_rate_bps ? String(item.personal_rate_bps / 100) : '')
   const [employer, setEmployer] = useState(item.employer_rate_bps ? String(item.employer_rate_bps / 100) : '')
+  const [enabled, setEnabled] = useState(item.enabled)
+  useEffect(() => {
+    setPersonal(item.rates_filled ? editableAmount(item.personal_rate_bps) : '')
+    setEmployer(item.rates_filled ? editableAmount(item.employer_rate_bps) : '')
+    setEnabled(item.enabled)
+  }, [item.personal_rate_bps, item.employer_rate_bps, item.rates_filled, item.enabled])
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-ab-sm bg-surface-2/50 px-2 py-1.5">
@@ -1884,24 +2047,33 @@ function RateRow({
         ) : null}
       </span>
       <input
-        className="ab-input ab-tnum !w-16"
+        className="ab-input ab-tnum !w-24"
         inputMode="decimal"
         value={personal}
+        disabled={busy}
+        aria-label={`${item.name} ${t('payroll.personalShort')}`}
         placeholder={t('payroll.personalShort')}
         onChange={(event) => setPersonal(event.target.value)}
       />
       <input
-        className="ab-input ab-tnum !w-16"
+        className="ab-input ab-tnum !w-24"
         inputMode="decimal"
         value={employer}
+        disabled={busy}
+        aria-label={`${item.name} ${t('payroll.employerShort')}`}
         placeholder={t('payroll.employerShort')}
         onChange={(event) => setEmployer(event.target.value)}
       />
+      <label className="flex items-center gap-1 text-ab-caption1 text-label-3">
+        <input type="checkbox" checked={enabled} disabled={busy}
+          aria-label={`${item.name} ${t('payroll.itemEnabled')}`}
+          onChange={(event) => setEnabled(event.target.checked)} />{t('payroll.itemEnabled')}
+      </label>
       <button
         type="button"
         className="ab-btn-secondary shrink-0"
         disabled={busy}
-        onClick={() => void onSave(item.kind, personal, employer)}
+        onClick={() => void onSave(item, personal, employer, enabled)}
       >
         {t('common.save')}
       </button>
@@ -1911,12 +2083,14 @@ function RateRow({
 
 function ProfileDialog({
   open,
+  profile,
   onClose,
   onDone,
 }: {
   open: boolean
+  profile: InsuranceProfile | null
   onClose: () => void
-  onDone: () => void
+  onDone: (profile: InsuranceProfile) => void
 }) {
   const { t } = useI18n()
   const [name, setName] = useState('')
@@ -1927,18 +2101,32 @@ function ProfileDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useEffect(() => {
+    if (!open) return
+    setName(profile?.name ?? '')
+    setCity(profile?.city ?? '')
+    setEmployer(profile?.employer ?? '')
+    setSocial(editableAmount(profile?.social_base_minor ?? 0))
+    setHousing(editableAmount(profile?.housing_base_minor ?? 0))
+    setError(null)
+  }, [open, profile])
+
   const submit = async () => {
     setBusy(true)
     setError(null)
     try {
-      await api.createInsuranceProfile({
+      const socialMinor = nonnegativeAmount(social)
+      const housingMinor = nonnegativeAmount(housing)
+      if (socialMinor === null || housingMinor === null) { setError(t('payroll.invalidBase')); return }
+      const payload = {
         name,
         city,
         employer,
-        social_base_minor: Math.round(Number(social || '0') * 100),
-        housing_base_minor: Math.round(Number(housing || '0') * 100),
-      })
-      onDone()
+        social_base_minor: socialMinor,
+        housing_base_minor: housingMinor,
+      }
+      const saved = profile ? await api.updateInsuranceProfile(profile.id, payload) : await api.createInsuranceProfile(payload)
+      onDone(saved)
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.detail : String(cause))
     } finally {
@@ -1949,11 +2137,11 @@ function ProfileDialog({
   return (
     <Modal
       open={open}
-      title={t('payroll.newProfile')}
-      onClose={onClose}
+      title={t(profile ? 'payroll.editProfile' : 'payroll.newProfile')}
+      onClose={() => { if (!busy) onClose() }}
       footer={
         <>
-          <button type="button" className="ab-btn-secondary" onClick={onClose}>
+          <button type="button" className="ab-btn-secondary" disabled={busy} onClick={onClose}>
             {t('common.cancel')}
           </button>
           <button type="button" className="ab-btn-primary" disabled={busy || !name} onClick={() => void submit()}>

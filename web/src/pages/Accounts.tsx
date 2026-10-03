@@ -82,7 +82,7 @@ const COLOR_CHOICES = [
 export function AccountsPage() {
   const { t } = useI18n()
   const { preferences } = usePreferences()
-  const { status, accounts, allAccounts, refresh } = useLedger()
+  const { resourceStates, overview: accountOverview, accounts, allAccounts, refresh } = useLedger()
   const [editing, setEditing] = useState<Account | null>(null)
   const [creating, setCreating] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
@@ -94,6 +94,7 @@ export function AccountsPage() {
   const [deleting, setDeleting] = useState<{ id: number; name: string } | null>(null)
 
   const visible = showArchived ? allAccounts : allAccounts.filter((item) => !item.is_archived)
+  const accountListUnavailable = resourceStates.accounts === 'error' && allAccounts.length === 0
   const totals = accounts.reduce(
     (accumulator, item) => {
       if (!item.include_in_net_worth || item.currency !== 'CNY') return accumulator
@@ -196,7 +197,7 @@ export function AccountsPage() {
     await refresh()
   }
 
-  if (status === 'loading') {
+  if (resourceStates.accounts === 'loading' || (resourceStates.overview === 'loading' && accountOverview === null)) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-24 w-full" />
@@ -216,19 +217,19 @@ export function AccountsPage() {
         <Card dense>
           <div className="ab-section-label !px-0 !pt-0">{t('ledger.totalAssets')}</div>
           <div className="ab-metric text-positive">
-            {displayMinor(totals.assets, 'CNY', preferences.privacy_mode)}
+            {accountOverview ? displayMinor(totals.assets, 'CNY', preferences.privacy_mode) : '—'}
           </div>
         </Card>
         <Card dense>
           <div className="ab-section-label !px-0 !pt-0">{t('ledger.totalLiabilities')}</div>
           <div className="ab-metric text-negative">
-            {displayMinor(totals.liabilities, 'CNY', preferences.privacy_mode)}
+            {accountOverview ? displayMinor(totals.liabilities, 'CNY', preferences.privacy_mode) : '—'}
           </div>
         </Card>
         <Card dense>
           <div className="ab-section-label !px-0 !pt-0">{t('ledger.netWorth')}</div>
           <div className="ab-metric">
-            {displayMinor(totals.assets - totals.liabilities, 'CNY', preferences.privacy_mode)}
+            {accountOverview ? displayMinor(totals.assets - totals.liabilities, 'CNY', preferences.privacy_mode) : '—'}
           </div>
         </Card>
       </div>
@@ -237,7 +238,7 @@ export function AccountsPage() {
         <div className="flex items-center gap-2">
           <h1 className="text-ab-title3 font-semibold text-label">{t('nav.accounts')}</h1>
           <span className="text-ab-footnote text-label-3">
-            {t('ledger.accountCount', { count: visible.length })}
+            {accountListUnavailable ? '—' : t('ledger.accountCount', { count: visible.length })}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -261,8 +262,8 @@ export function AccountsPage() {
         <Card flush>
           <EmptyState
             icon="accounts"
-            title={t('ledger.noAccountsTitle')}
-            body={t('ledger.noAccountsBody')}
+            title={t(accountListUnavailable ? 'nav.accounts' : 'ledger.noAccountsTitle')}
+            body={t(accountListUnavailable ? 'ledgerLoading.notLoaded' : 'ledger.noAccountsBody')}
             action={
               <button type="button" className="ab-btn-primary" onClick={openCreate}>
                 <Icon name="plus" size={14} />
@@ -346,11 +347,11 @@ export function AccountsPage() {
                         balance < 0 ? 'text-negative' : 'text-label'
                       }`}
                     >
-                      {displayMinor(balance, account.currency, preferences.privacy_mode)}
+                      {accountOverview ? displayMinor(balance, account.currency, preferences.privacy_mode) : '—'}
                     </div>
                   </div>
 
-                  {limit > 0 ? (
+                  {limit > 0 && accountOverview ? (
                     <div className="mt-3">
                       <div className="flex items-center justify-between text-ab-caption text-label-3">
                         <span>{t('ledger.creditUsed')}</span>

@@ -88,6 +88,11 @@ def restore_source(source_id: int, session: Session = SessionDep) -> Any:
     return payroll_service.serialize_source(payroll_service.restore_source(session, source_id))
 
 
+@router.get("/payroll/sources/{source_id}/rule", summary="读取发薪规则")
+def get_payday_rule(source_id: int, session: Session = SessionDep) -> Any:
+    return payroll_service.serialize_rule(payroll_service.get_payday_rule(session, source_id))
+
+
 @router.put("/payroll/sources/{source_id}/rule", summary="设置发薪规则")
 def upsert_payday_rule(source_id: int, payload: PaydayRuleIn, session: Session = SessionDep) -> Any:
     rule = payroll_service.upsert_payday_rule(session, source_id, **payload.model_dump())

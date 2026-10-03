@@ -70,7 +70,7 @@ function presetRange(preset: RangePreset): { start?: string; end?: string } {
 export function TransactionsPage() {
   const { t } = useI18n()
   const { preferences } = usePreferences()
-  const { status, accounts, categoryById, tags, refresh } = useLedger()
+  const { accounts, categoryById, tags, refresh } = useLedger()
   // 用 react-router 的 hook 而不是全局 location：后者在 SPA 里"恰好能用"，
   // 但一旦将来引入 basename 或内存路由就会悄悄失效
   const location = useLocation()
@@ -430,7 +430,7 @@ export function TransactionsPage() {
         <div className="rounded-ab-sm bg-negative/10 px-3 py-2 text-ab-footnote text-negative">{error}</div>
       ) : null}
 
-      {status === 'loading' || loading ? (
+      {loading ? (
         <div className="space-y-2">
           {[0, 1, 2, 3, 4].map((key) => (
             <Skeleton key={key} className="h-14 w-full" />

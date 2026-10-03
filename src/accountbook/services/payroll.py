@@ -44,8 +44,8 @@ from ..db.models import (
     PaydayRule,
     PayrollRecord,
     PaySource,
-    Transaction,
 )
+from . import transactions as transactions_service
 from . import workdays
 
 __all__ = [
@@ -707,6 +707,11 @@ def fill_record(
     transaction_id: int | None = None,
     create_transaction: bool = True,
     occurred_at: datetime | None = None,
+    pay_date: date | None = None,
+    overrides: dict[int, int] | None = None,
+    gross_minor: int | None = None,
+    tax_minor: int | None = None,
+    insurance_minor: int | None = None,
 ) -> dict[str, Any]:
     """标记为已填写，并（可选）生成一笔入账流水。
 
@@ -716,12 +721,51 @@ def fill_record(
     if row.status == "filled":
         # 幂等：重复点击不该生成第二笔流水
         return {"record_id": row.id, "transaction_id": row.transaction_id, "created": False}
-    if row.net_minor <= 0 and create_transaction:
+    manual = any(value is not None for value in (gross_minor, tax_minor, insurance_minor))
+    edited = overrides is not None or manual or pay_date is not None
+    if edited and row.status != "draft":
+        raise ConflictError("只有待填写的工资表可以修改", entity="payroll_record")
+    items = [dict(item) for item in row.items]
+    if manual:
+        if items or overrides is not None or gross_minor is None:
+            raise ValidationError("有组成项时请逐项填写金额；无组成项时须填写应发金额", field="gross_minor")
+        for component_id, name, kind, sign, amount in (
+            (0, "应发工资", "basic", 1, gross_minor),
+            (-1, "个税", "tax", -1, tax_minor or 0),
+            (-2, "五险一金", "insurance", -1, insurance_minor or 0),
+        ):
+            items.append({
+                "component_id": component_id, "name": name, "kind": kind, "sign": sign,
+                "direction": "add" if sign == 1 else "deduct", "calc": "manual",
+                "amount_minor": amount, "rate_bps": 0, "base_key": "gross",
+                "source_amount_minor": 0,
+            })
+    if overrides is not None:
+        unknown = set(overrides) - {item["component_id"] for item in items}
+        if unknown:
+            raise ValidationError("金额必须对应这份工资表的组成项", field="overrides")
+        for item in items:
+            if item["component_id"] in overrides:
+                item["amount_minor"] = overrides[item["component_id"]]
+    amounts_changed = manual or overrides is not None
+    if amounts_changed:
+        for item in items:
+            amount = item["amount_minor"]
+            if type(amount) is not int or not 0 <= amount <= 9_007_199_254_740_991:
+                raise ValidationError("金额须为非负整数分，且不能超出有效范围", field="amount_minor")
+        gross = sum(item["amount_minor"] for item in items if item["direction"] == "add")
+        deducted = sum(item["amount_minor"] for item in items if item["direction"] == "deduct")
+        if gross > 9_007_199_254_740_991 or deducted > gross:
+            raise ValidationError("扣减合计不能超过应发，金额不能超出有效范围", field="amount_minor")
+        net = gross - deducted
+    else:
+        gross, net = row.gross_minor, row.net_minor
+    if net <= 0 and create_transaction:
         raise ConflictError(
             "实发金额为 0，无法入账",
             entity="payroll_record",
             record_id=record_id,
-            net_minor=row.net_minor,
+            net_minor=net,
         )
 
     source = get_source(session, row.source_id)
@@ -731,23 +775,34 @@ def fill_record(
             raise ValidationError(
                 "这个来源没有设置入账账户，无法生成流水", field="account_id", source_id=source.id
             )
-        stamp = occurred_at or datetime.combine(row.pay_date, datetime.min.time()).replace(hour=10)
-        transaction = Transaction(
+        account = session.get(Account, source.account_id)
+        if account is None or account.deleted_at is not None or account.currency != "CNY":
+            raise ValidationError("请选择有效的人民币入账账户", field="account_id")
+        stamp = occurred_at or datetime.combine(pay_date or row.pay_date, datetime.min.time()).replace(hour=10)
+        transaction = transactions_service.create_transaction(
+            session,
             type=TransactionType.INCOME.value,
             direction="in",
             account_id=source.account_id,
             category_id=source.category_id,
-            amount_minor=row.net_minor,
+            amount_minor=net,
+            currency="CNY",
             occurred_at=stamp,
             payee=f"{source.employer or source.name} 工资",
             note=f"{row.period} 工资（实发）",
             status="cleared",
             source=TransactionSource.MANUAL.value,
         )
-        session.add(transaction)
-        session.flush()
         created_transaction = transaction.id
 
+    if amounts_changed:
+        row.items = items
+        row.gross_minor = gross
+        row.net_minor = net
+        row.tax_minor = sum(item["amount_minor"] for item in items if item["kind"] == "tax" and item["direction"] == "deduct")
+        row.insurance_snapshot = {"total_minor": sum(item["amount_minor"] for item in items if item["kind"] == "insurance" and item["direction"] == "deduct")}
+    if pay_date is not None:
+        row.pay_date = pay_date
     row.transaction_id = created_transaction
     row.status = "filled"
     row.filled_at = datetime.now()
@@ -993,6 +1048,11 @@ def upsert_payday_rule(session: Session, source_id: int, **changes: Any) -> Payd
             setattr(rule, key, value)
     session.flush()
     return rule
+
+
+def get_payday_rule(session: Session, source_id: int) -> PaydayRule | None:
+    get_source(session, source_id)
+    return session.scalar(select(PaydayRule).where(PaydayRule.source_id == source_id))
 
 
 def serialize_rule(rule: PaydayRule | None) -> dict[str, Any] | None:

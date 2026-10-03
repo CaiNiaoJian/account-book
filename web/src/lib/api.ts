@@ -835,14 +835,14 @@ export const api = {
     }),
 
   // ---- 元数据 --------------------------------------------------------------
-  enums: () => request<Enums>('/api/meta/enums'),
-  currencies: () => request<Currency[]>('/api/meta/currencies'),
+  enums: (signal?: AbortSignal) => request<Enums>('/api/meta/enums', { signal }),
+  currencies: (signal?: AbortSignal) => request<Currency[]>('/api/meta/currencies', { signal }),
 
   // ---- 账户 ----------------------------------------------------------------
-  accounts: (params: { include_archived?: boolean; include_deleted?: boolean } = {}) =>
-    request<Account[]>(`/api/accounts${query(params)}`),
-  accountsOverview: (params: { include_archived?: boolean } = {}) =>
-    request<AccountOverview>(`/api/accounts/overview${query(params)}`),
+  accounts: (params: { include_archived?: boolean; include_deleted?: boolean } = {}, signal?: AbortSignal) =>
+    request<Account[]>(`/api/accounts${query(params)}`, { signal }),
+  accountsOverview: (params: { include_archived?: boolean } = {}, signal?: AbortSignal) =>
+    request<AccountOverview>(`/api/accounts/overview${query(params)}`, { signal }),
   createAccount: (payload: Partial<Account>) =>
     request<Account>('/api/accounts', { method: 'POST', body: JSON.stringify(payload) }),
   updateAccount: (id: number, changes: Partial<Account>) =>
@@ -853,8 +853,8 @@ export const api = {
   // ---- 分类 ----------------------------------------------------------------
   categories: (params: { kind?: string; include_hidden?: boolean } = {}) =>
     request<Category[]>(`/api/categories${query(params)}`),
-  categoryTree: (params: { kind?: string; include_hidden?: boolean } = {}) =>
-    request<CategoryNode[]>(`/api/categories/tree${query(params)}`),
+  categoryTree: (params: { kind?: string; include_hidden?: boolean } = {}, signal?: AbortSignal) =>
+    request<CategoryNode[]>(`/api/categories/tree${query(params)}`, { signal }),
   createCategory: (payload: {
     name: string
     kind: CategoryKind
@@ -892,14 +892,14 @@ export const api = {
     request<Transaction>(`/api/transactions/${id}/restore`, { method: 'POST' }),
 
   // ---- 标签 / 项目 / 成员 ---------------------------------------------------
-  tags: () => request<Tag[]>('/api/tags'),
+  tags: (signal?: AbortSignal) => request<Tag[]>('/api/tags', { signal }),
   createTag: (payload: { name: string; color?: string; note?: string }) =>
     request<Tag>('/api/tags', { method: 'POST', body: JSON.stringify(payload) }),
   updateTag: (id: number, changes: { name?: string; color?: string; note?: string }) =>
     request<Tag>(`/api/tags/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
   deleteTag: (id: number) => request<void>(`/api/tags/${id}`, { method: 'DELETE' }),
 
-  projects: () => request<Project[]>('/api/projects'),
+  projects: (signal?: AbortSignal) => request<Project[]>('/api/projects', { signal }),
   createProject: (payload: { name: string; color?: string; budget_minor?: number; note?: string }) =>
     request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(payload) }),
   updateProject: (
@@ -908,7 +908,7 @@ export const api = {
   ) => request<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
   deleteProject: (id: number) => request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
 
-  members: () => request<Member[]>('/api/members'),
+  members: (signal?: AbortSignal) => request<Member[]>('/api/members', { signal }),
   createMember: (payload: { name: string; color?: string; is_self?: boolean; note?: string }) =>
     request<Member>('/api/members', { method: 'POST', body: JSON.stringify(payload) }),
   updateMember: (id: number, changes: { name?: string; color?: string; is_self?: boolean; note?: string }) =>
@@ -1300,6 +1300,7 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+  paydayRule: (id: number) => request<PaydayRule | null>(`/api/payroll/sources/${id}/rule`),
   payrollComponents: (sourceId?: number, includeDisabled = true) =>
     request<{ items: PayComponent[]; count: number }>(
       `/api/payroll/components${query({ source_id: sourceId, include_disabled: includeDisabled })}`,
@@ -1325,7 +1326,14 @@ export const api = {
     request<PayrollRecord>('/api/payroll/records', { method: 'POST', body: JSON.stringify(payload) }),
   recomputePayrollRecord: (id: number) =>
     request<PayrollRecord>(`/api/payroll/records/${id}/recompute`, { method: 'POST' }),
-  fillPayrollRecord: (id: number, payload: { create_transaction?: boolean } = {}) =>
+  fillPayrollRecord: (id: number, payload: {
+    create_transaction?: boolean
+    pay_date?: string
+    overrides?: Record<number, number>
+    gross_minor?: number
+    tax_minor?: number
+    insurance_minor?: number
+  } = {}) =>
     request<{ record_id: number; transaction_id: number | null; created: boolean }>(
       `/api/payroll/records/${id}/fill`,
       { method: 'POST', body: JSON.stringify(payload) },

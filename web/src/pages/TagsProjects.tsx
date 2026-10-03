@@ -43,7 +43,7 @@ const COLOR_CHOICES = [
 export function TagsProjectsPage() {
   const { t } = useI18n()
   const { preferences } = usePreferences()
-  const { status, tags, projects, members, refresh } = useLedger()
+  const { resourceStates, tags, projects, members, refresh } = useLedger()
 
   const [tab, setTab] = useState<Tab>('tags')
   const [dialog, setDialog] = useState<
@@ -140,7 +140,7 @@ export function TagsProjectsPage() {
     await refresh()
   }
 
-  if (status === 'loading') {
+  if (resourceStates.tags === 'loading' && resourceStates.projects === 'loading' && resourceStates.members === 'loading') {
     return (
       <div className="space-y-3">
         <Skeleton className="h-9 w-64" />
@@ -152,6 +152,7 @@ export function TagsProjectsPage() {
   }
 
   const counts = { tags: tags.length, projects: projects.length, members: members.length }
+  const unavailable = resourceStates[tab] !== 'ready' && counts[tab] === 0
   const tabLabels: Record<Tab, string> = {
     tags: t('ledger.tabTags'),
     projects: t('ledger.tabProjects'),
@@ -172,7 +173,7 @@ export function TagsProjectsPage() {
             onChange={(next) => setTab(next as Tab)}
             options={(['tags', 'projects', 'members'] as Tab[]).map((item) => ({
               value: item,
-              label: `${tabLabels[item]} ${counts[item]}`,
+              label: `${tabLabels[item]} ${resourceStates[item] !== 'ready' && counts[item] === 0 ? '—' : counts[item]}`,
             }))}
           />
         </div>
@@ -189,8 +190,8 @@ export function TagsProjectsPage() {
         <Card flush>
           <EmptyState
             icon={tab === 'tags' ? 'tags' : tab === 'projects' ? 'ledger' : 'goals'}
-            title={t('ledger.emptyDimensionTitle')}
-            body={hints[tab]}
+            title={unavailable ? tabLabels[tab] : t('ledger.emptyDimensionTitle')}
+            body={unavailable ? t('ledgerLoading.notLoaded') : hints[tab]}
             action={
               <button type="button" className="ab-btn-primary" onClick={openCreate}>
                 <Icon name="plus" size={14} />

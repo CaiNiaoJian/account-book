@@ -25,6 +25,7 @@ import { localDayKey, parseAmountToMinor, displayMinor } from '@/lib/format'
 import { usePreferences } from '@/app/preferences'
 
 import { TransactionAttachments } from './Attachments'
+import { LedgerLoadNotice } from './LoadNotice'
 import { CategoryPicker, Modal, TagPicker } from './parts'
 import { useLedger } from './store'
 
@@ -117,23 +118,26 @@ function toPayload(draft: DraftState, keepTime?: string) {
  * 这条 —— 侧边栏提示、保存按钮禁用、提交前的最终校验都引用同一个判断。
  */
 export function useTransactionDraft(initial?: Transaction) {
-  const { accounts, tags } = useLedger()
+  const { accounts, tags, resourceStates } = useLedger()
   const [draft, setDraft] = useState<DraftState>(initial ? draftFrom(initial) : EMPTY_DRAFT)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const hydratedTags = useRef<Transaction | undefined>(undefined)
 
   // 编辑已有流水时把标签**名字**还原成 id。
   // 接口在列表里只回传名字（展示用），而提交需要 id；
   // 这个映射只在"进入编辑"时做一次，所以放在这里而不是让接口回传两套字段。
   useEffect(() => {
-    if (!initial || tags.length === 0) return
+    if (!initial || hydratedTags.current === initial ||
+      !initial.tags.every((name) => tags.some((tag) => tag.name === name))) return
     const ids = initial.tags
       .map((name) => tags.find((tag) => tag.name === name)?.id)
       .filter((id): id is number => typeof id === 'number')
     setDraft((previous) => (previous.tagIds.length > 0 ? previous : { ...previous, tagIds: ids }))
+    hydratedTags.current = initial
     // 只在标签字典首次就绪时补齐，之后不再干预用户选择
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initial?.id, tags.length])
+  }, [initial, tags])
 
   // 默认账户：优先用户上次使用的（P1 先用第一个未归档账户）
   useEffect(() => {
@@ -153,6 +157,8 @@ export function useTransactionDraft(initial?: Transaction) {
   const splitsValid = draft.splits.length === 0 || splitTotal === draft.amountMinor
 
   const canSubmit =
+    // 标签只返回名字；字典暂缺时不能把未解析的原标签当作“用户已清空”。
+    (!initial?.tags.length || resourceStates.tags === 'ready' || initial.tags.every((name) => tags.some((tag) => tag.name === name))) &&
     draft.amountMinor !== null &&
     draft.amountMinor > 0 &&
     draft.accountId !== null &&
@@ -323,6 +329,7 @@ export function QuickAddDialog({ open, onClose, onSaved }: QuickAddDialogProps) 
       }
     >
       <div className="space-y-3.5">
+        <LedgerLoadNotice inline />
         {/* 模板与文本解析 */}
         <div className="space-y-2">
           {templates.length > 0 ? (
@@ -609,6 +616,7 @@ export function TransactionEditor({
       }
     >
       <div className="space-y-3.5">
+        <LedgerLoadNotice inline />
         <div className="ab-segment">
           {(['expense', 'income', 'transfer', 'adjust'] as TransactionType[]).map((type) => (
             <button

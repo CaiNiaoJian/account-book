@@ -18,6 +18,7 @@ import { useLocation, useNavigate, useOutlet } from 'react-router-dom'
 
 import { pageVariants } from '@/design/motion'
 import { useI18n } from '@/i18n'
+import { LedgerLoadNotice } from '@/features/ledger/LoadNotice'
 import { findNavItemByPath } from './navigation'
 import { usePreferences } from './preferences'
 import { Sidebar } from './Sidebar'
@@ -98,6 +99,7 @@ export function AppShell() {
         />
 
         <main id="ab-main" className="flex-1 overflow-y-auto overflow-x-hidden">
+          <LedgerLoadNotice />
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={location.pathname}
