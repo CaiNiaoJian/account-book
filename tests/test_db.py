@@ -58,8 +58,10 @@ class TestMigrations:
         with database.engine.connect() as connection:
             journal = connection.execute(text("PRAGMA journal_mode")).scalar()
             foreign_keys = connection.execute(text("PRAGMA foreign_keys")).scalar()
+            temp_store = connection.execute(text("PRAGMA temp_store")).scalar()
         assert str(journal).lower() == "wal"
         assert int(foreign_keys) == 1
+        assert int(temp_store) == 2
 
 
 # -----------------------------------------------------------------------------

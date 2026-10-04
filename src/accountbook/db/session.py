@@ -19,6 +19,7 @@ PRAGMA                  作用与选择理由
                         我们所有 ``ondelete`` 行为与引用完整性都是摆设。
 ``synchronous=NORMAL``  WAL 下的推荐值：兼顾安全与速度（FULL 会让每笔写入都 fsync）。
 ``busy_timeout=5000``   遇到锁时等待而不是立刻失败，避免用户看到莫名的写入错误。
+``temp_store=MEMORY``   临时查询表与索引放在内存，统计重算不依赖系统临时目录权限。
 ======================  ==========================================================
 
 线程模型
@@ -164,6 +165,10 @@ def _install_sqlite_pragmas(engine: Engine) -> None:
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.execute("PRAGMA busy_timeout=5000")
+            # Large cache invalidations materialize row IDs in a temporary B-tree.
+            # An inaccessible Windows TEMP directory otherwise turns a valid ledger into CANTOPEN.
+            # Only temporary query data moves to memory; the ledger and its WAL remain on disk.
+            cursor.execute("PRAGMA temp_store=MEMORY")
         finally:
             cursor.close()
 

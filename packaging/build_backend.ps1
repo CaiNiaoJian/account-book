@@ -20,7 +20,10 @@ param(
     [switch]$SkipFrontend,
 
     # 打包完成后立即启动一次做冒烟验证（默认开启）
-    [switch]$NoSmokeTest
+    [switch]$NoSmokeTest,
+
+    # Build a side-by-side patch while an installed version is still running.
+    [string]$OutputDirectory = 'dist\AccountBook'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -219,8 +222,8 @@ if (-not $NoSmokeTest) {
 
 # Verify the staged application before replacing the installed program.
 . (Join-Path $scriptDir 'publish_backend.ps1')
-Publish-AccountBook -Source (Join-Path $stagingDist 'AccountBook') -Target (Join-Path $repoRoot 'dist\AccountBook') -Workspace $repoRoot
-Write-Ok ('程序已更新，原数据目录已保留：' + (Join-Path $repoRoot 'dist\AccountBook'))
+Publish-AccountBook -Source (Join-Path $stagingDist 'AccountBook') -Target (Join-Path $repoRoot $OutputDirectory) -Workspace $repoRoot
+Write-Ok ('程序已更新，原数据目录已保留：' + (Join-Path $repoRoot $OutputDirectory))
 $allowedStagingRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot '.smoke-test')).TrimEnd('\') + '\'
 $resolvedStaging = [IO.Path]::GetFullPath($staging)
 if (-not $resolvedStaging.StartsWith($allowedStagingRoot, [StringComparison]::OrdinalIgnoreCase)) {

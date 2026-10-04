@@ -3,7 +3,7 @@
 > 本地优先、离线可用、Apple 美学的个人记账与财务分析桌面工具。
 > 账本只存在你自己的电脑上 —— 没有云同步、没有遥测、没有启动联网。
 
-**当前版本：0.2.0，主要功能覆盖 P0–P6。** 更新与恢复见 [docs/UPDATE.md](docs/UPDATE.md)，变更见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
+**当前版本：0.2.1，主要功能覆盖 P0–P6。** 更新与恢复见 [docs/UPDATE.md](docs/UPDATE.md)，变更见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 
 ---
 

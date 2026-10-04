@@ -28,7 +28,7 @@ jobs:
       - name: Verify tests and source
         shell: pwsh
         run: |
-          .venv/Scripts/python.exe -m ruff check src tests/test_amount_consistency.py tests/test_backups.py tests/test_reminders.py tests/test_transaction_retries.py
+          .venv/Scripts/python.exe -m ruff check src tests/test_amount_consistency.py tests/test_backups.py tests/test_reminders.py tests/test_transaction_retries.py tests/test_dashboard_temp_storage.py tests/test_db.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .venv/Scripts/python.exe -m pytest -o addopts="--strict-markers" -q
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

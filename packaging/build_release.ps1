@@ -1,8 +1,8 @@
 [CmdletBinding()]
-param()
+param([string]$ProgramDirectory = 'dist/AccountBook')
 $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
-$program = Join-Path $workspace 'dist/AccountBook'
+$program = Join-Path $workspace $ProgramDirectory
 $output = Join-Path $workspace 'release'
 $match = Select-String -LiteralPath (Join-Path $workspace 'src/accountbook/__init__.py') -Pattern '^__version__ = "([^"]+)"'
 $version = $match.Matches[0].Groups[1].Value
